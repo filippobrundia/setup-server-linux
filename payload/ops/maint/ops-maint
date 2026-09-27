@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# ops-maint — manutenzione automatica del server (root, avviato da systemd).
+# Copia installata: /usr/local/sbin/ops-maint (root:root 0755). Sorgente: /srv/ops/maint/ops-maint.
+# Parametri della macchina: /etc/ops-maint.conf (root:root 0644, letto riga per riga, mai eseguito).
+# Documentazione: /srv/ops/docs/runbooks/manutenzione.md
+#
+#   ops-maint window     finestra settimanale: aggiornamenti approvati, poi riavvio se richiesto
+#   ops-maint attended   come window, lanciato a mano con l'amministratore presente (terminale): non richiede
+#                        APPROVED=yes, ignora sessioni e agenti aperti, chiede conferma prima di agire
+#   ops-maint postboot   verifica dopo un riavvio fatto dalla finestra
+#   ops-maint procs      elenca i lavori attivi che impediscono la manutenzione (anche non root)
+#   DRY_RUN=1 ... window controlla tutto, non installa e non riavvia
+#
+# Principi: agisce solo se TUTTE le condizioni sono vere, altrimenti rinvia e registra il motivo; dopo un
+# errore crea "hold" e non fa altro finché un agente non ha verificato e rimosso il file.
+set -uo pipefail
+export LC_ALL=C.UTF-8
+export PATH="${MAINT_TEST_PATH:+$MAINT_TEST_PATH:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+CONF=${MAINT_CONF:-/etc/ops-maint.conf}
+STATE=${MAINT_STATE:-/var/lib/ops-maint}          # root:root 0755 — scritto solo da root
+INBOX=${MAINT_INBOX:-$STATE/inbox}                # root:ADMIN 2770 — input degli agenti
+LOCK=${MAINT_LOCK:-/run/lock/ops-maint.lock}      # condiviso con cli-update e install-maint
+HISTORY=$STATE/history.log HOLD=$STATE/hold PENDING=$STATE/postboot-pending ROLLBACK=$STATE/rollback
+REBOOT_FLAG=${MAINT_REBOOT_FLAG:-/var/run/reboot-required}   # MAINT_*: sostituibili solo per i test
+PROC=${MAINT_PROC:-/proc}
+NET_DIRS=${MAINT_NET_DIRS:-/run/systemd/network /run/NetworkManager/system-connections /etc/netplan}
+DRY=${DRY_RUN:-0}
+
+log()   { local m; m="$(date -u '+%F %T') ${MODE:-?}: $*"; echo "$m"; [ "$DRY" = 1 ] || echo "$m" >> "$HISTORY"; }
+defer() { log "RINVIO: $*"; exit 0; }
+hold()  { log "ERRORE: $* — manutenzione sospesa finché un agente non rimuove $HOLD"
+          [ "$DRY" = 1 ] || echo "$(date -u '+%F %T') $*" > "$HOLD"; }
+
+# --- Parametri: file di root, non scrivibile da altri, solo chiavi note con valori validati ---
+conf_get() { awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$CONF"; }
+load_conf() {
+  [ -f "$CONF" ] && [ ! -L "$CONF" ] || { echo "manca $CONF (sudo /srv/ops/maint/install-maint install)" >&2; exit 2; }
+  if [ -z "${MAINT_TEST_PATH:-}" ]; then
+    [ "$(stat -c %U "$CONF")" = root ] && [ $(( 0$(stat -c %a "$CONF") & 022 )) = 0 ] \
+      || { echo "$CONF deve essere di root e non scrivibile da altri" >&2; exit 2; }
+  fi
+  ADMIN=$(conf_get ADMIN); QUICK=$(conf_get QUICK_CHECK)
+  UBUNTU_VERSION=$(conf_get UBUNTU_VERSION); CODENAME=$(conf_get UBUNTU_CODENAME)
+  REQUIRED_UNITS=$(conf_get REQUIRED_UNITS); EXTRA_ORIGINS=$(conf_get EXTRA_ORIGINS_RE)
+  EXTRA_BUSY=$(conf_get EXTRA_BUSY_ARG_RE)
+  [[ "$ADMIN" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || { echo "ADMIN non valido in $CONF" >&2; exit 2; }
+  [[ "$QUICK" =~ ^/[A-Za-z0-9/._-]+$ ]] || { echo "QUICK_CHECK non valido in $CONF" >&2; exit 2; }
+  [[ "$UBUNTU_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] && [[ "$CODENAME" =~ ^[a-z]+$ ]] \
+    || { echo "UBUNTU_VERSION/UBUNTU_CODENAME non validi in $CONF" >&2; exit 2; }
+  [[ "$REQUIRED_UNITS" =~ ^[A-Za-z0-9@._|\ -]*$ ]] || { echo "REQUIRED_UNITS non valido in $CONF" >&2; exit 2; }
+  # Origini da cui la finestra accetta pacchetti (etichette di apt-get -s).
+  ORIGINS_RE="(Ubuntu:${UBUNTU_VERSION//./\\.}/$CODENAME(-updates|-security)?|Docker CE:$CODENAME${EXTRA_ORIGINS:+|$EXTRA_ORIGINS})[ ,]"
+}
+
+# --- Lavori attivi: eseguibile reale (/proc/PID/exe) o script avviato da un interprete (node, python, sh) ---
+BUSY_EXE='^(borg|borgmatic|rclone|claude|claude\.exe|codex|agy|antigravity|gemini|apt|apt-get|aptitude|dpkg|unattended-upgrade)$'
+BUSY_ARG='(/borgmatic$|/borg$|run-borgmatic|/rclone$|/usr/bin/unattended-upgrade$|@anthropic-ai/claude-code|@openai/codex|@google/gemini-cli|/bin/(claude|codex|gemini|agy)$|/\.local/bin/agy$)'
+busy_procs() {
+  local d pid exe comm arg found re=$BUSY_ARG
+  [ -n "${EXTRA_BUSY:-}" ] && re="($BUSY_ARG|$EXTRA_BUSY)"
+  for d in "$PROC"/[0-9]*; do
+    pid=${d##*/}
+    [ "$pid" = "$$" ] || [ "$pid" = "$BASHPID" ] && continue
+    exe=$(readlink "$d/exe" 2>/dev/null); exe=${exe% (deleted)}
+    comm=$(cat "$d/comm" 2>/dev/null) || continue
+    found=""
+    if [[ "${exe##*/}" =~ $BUSY_EXE ]] || { [ -z "$exe" ] && [[ "$comm" =~ $BUSY_EXE ]]; }; then
+      found=${exe:-$comm}
+    else
+      while IFS= read -r -d '' arg; do
+        [[ "$arg" == *unattended-upgrade-shutdown* ]] && { found=""; break; }
+        [[ "$arg" =~ $re ]] && found="$comm $arg"
+      done < "$d/cmdline" 2>/dev/null
+    fi
+    [ -n "$found" ] && { found=${found//[$'\n\t']/ }; echo "$pid:${found:0:70}"; }
+  done
+}
+apt_locks() {  # blocchi APT/dpkg detenuti adesso (POSIX lock, come li usa apt)
+  lslocks -n -o PID,PATH 2>/dev/null | awk '$2 ~ "^/var/lib/dpkg/lock|^/var/lib/apt/lists/lock|^/var/cache/apt/archives/lock" {print $1":"$2}'
+}
+recent_sessions() {  # sessioni interattive usate nelle ultime 2 ore
+  who -u | awk '$5 != "old" { split($5,t,":"); if ($5 == "." || t[1]*60+t[2] < 120) print $1"@"$2 }'
+}
+all_busy() {  # in modalità presidiata sessioni e agenti aperti sono attesi (c'è l'amministratore)
+  if [ "${ATTENDED:-0}" = 1 ]; then { busy_procs | grep -viE 'claude|codex|agy|antigravity|gemini'; apt_locks; } | paste -sd';'
+  else { busy_procs; apt_locks; recent_sessions; } | paste -sd';'; fi
+}
+
+# --- Input degli agenti: file regolari, non link, di root o dell'amministratore, piccoli ---
+safe_input() {
+  local f=$1 owner
+  [ -e "$f" ] || return 1
+  [ -f "$f" ] && [ ! -L "$f" ] || { hold "$f non è un file regolare"; exit 1; }
+  owner=$(stat -c %U "$f")
+  [ "$owner" = root ] || [ "$owner" = "$ADMIN" ] || { hold "$f appartiene a $owner"; exit 1; }
+  [ "$(stat -c %s "$f")" -le 65536 ] || { hold "$f troppo grande"; exit 1; }
+}
+
+# Controllo di salute (dischi, servizi, Docker, tunnel, backup) eseguito come utente normale.
+# Esce 0 se sano; stampa il motivo ed esce 1 se c'è un ERRORE o un problema nei backup.
+health() {
+  local out
+  if [ "$(id -u)" = 0 ]; then out=$(runuser -u "$ADMIN" -- "$QUICK" --gate 2>&1); else out=$("$QUICK" --gate 2>&1); fi
+  local bad; bad=$( { grep 'ERRORE' <<< "$out"; sed -n '/^Backup/,/^[A-Z]/p' <<< "$out" | grep 'ATTENZIONE'; } | sed 's/^ *//' | paste -sd';')
+  [ -z "$bad" ] || { echo "$bad"; return 1; }
+}
+
+net_fingerprint() {  # configurazione di rete generata (netplan → networkd/NetworkManager)
+  find $NET_DIRS -type f -print0 2>/dev/null \
+    | sort -z | xargs -0r sha256sum 2>/dev/null | sha256sum | cut -c1-16
+}
+
+# --- Aggiornamenti approvati: validazione completa prima di toccare qualcosa ---
+PKGS=()
+validate_list() {
+  local line n=0 p v inst cand sim
+  safe_input "$INBOX/approved-upgrades" || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+    # Solo "pacchetto=versione": niente spazi né opzioni (il nome deve iniziare con una lettera o una cifra).
+    [[ "$line" =~ ^([a-z0-9][a-z0-9.+-]{0,99})=([0-9][A-Za-z0-9.+:~-]{0,99})$ ]] \
+      || { hold "approved-upgrades, riga $n non valida (contenuto non registrato)"; exit 1; }
+    p=${BASH_REMATCH[1]}; v=${BASH_REMATCH[2]}
+    inst=$(dpkg-query -W -f='${db:Status-Abbrev}' "$p" 2>/dev/null)
+    [ "${inst:0:2}" = "ii" ] || defer "$p non è installato (la finestra aggiorna solo pacchetti presenti)"
+    cand=$(apt-cache policy "$p" | awk '/Candidate:/ {print $2}')
+    [ "$cand" = "$v" ] || defer "$p: approvato $v, candidato attuale $cand (serve una nuova valutazione)"
+    PKGS+=("$p=$v")
+  done < "$INBOX/approved-upgrades"
+  [ "${#PKGS[@]}" -gt 0 ] || return 0
+  sim=$(apt-get -s install --only-upgrade -o DPkg::Lock::Timeout=0 "${PKGS[@]}" 2>&1) || defer "simulazione non riuscita: $(tail -1 <<< "$sim")"
+  grep -q '^Remv' <<< "$sim" && { hold "la simulazione rimuove pacchetti: $(grep '^Remv' <<< "$sim" | cut -d' ' -f2 | paste -sd' ')"; exit 1; }
+  local foreign; foreign=$(grep '^Inst' <<< "$sim" | grep -vE "\(\S+ $ORIGINS_RE" | cut -d' ' -f2 | paste -sd' ')
+  [ -z "$foreign" ] || { hold "origine non ammessa per: $foreign"; exit 1; }
+}
+
+save_rollback() {  # scarica i .deb delle versioni installate, se il repository li offre ancora
+  local d pv p v; d="$ROLLBACK/$(date -u +%F)"; mkdir -p "$d"
+  for pv in "${PKGS[@]}"; do
+    p=${pv%%=*}; v=$(dpkg-query -W -f='${Version}' "$p")
+    if compgen -G "$ROLLBACK/*/${p}_${v//:/%3a}_*.deb" >/dev/null; then log "rollback disponibile: $p $v"; continue; fi
+    if (cd "$d" && apt-get download "$p=$v" >/dev/null 2>&1); then log "rollback disponibile: $p $v"
+    else log "rollback NON disponibile per $p $v (versione non più nel repository)"; fi
+  done
+}
+
+restore_rollback() {  # reinstalla le versioni precedenti salvate per i pacchetti approvati
+  local debs=() pv p v f
+  for pv in "${PKGS[@]}"; do
+    p=${pv%%=*}
+    v=$(awk -v p="$p" '$1 == p {print $2}' "$STATE/window-before.txt" 2>/dev/null)
+    f=$(compgen -G "$ROLLBACK/*/${p}_${v//:/%3a}_*.deb" | tail -1)
+    [ -n "$v" ] && [ -n "$f" ] && debs+=("$f")
+  done
+  [ "${#debs[@]}" -gt 0 ] || { log "nessun pacchetto precedente disponibile per il ripristino"; return 1; }
+  log "ripristino versioni precedenti: ${debs[*]##*/}"
+  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y --allow-downgrades \
+    -o DPkg::Lock::Timeout=900 -o Dpkg::Options::=--force-confold "${debs[@]}" >> "$STATE/apt-window.log" 2>&1
+}
+
+wait_healthy() {  # $1 = tentativi da 30 s
+  local i why
+  for i in $(seq 1 "$1"); do why=$(health) && return 0; [ "$i" -lt "$1" ] && sleep "${MAINT_SLEEP:-30}"; done
+  echo "$why"; return 1
+}
+
+unit_enabled() {  # "a|b": basta che una delle alternative sia abilitata (es. ssh.socket|ssh.service)
+  local alt
+  for alt in ${1//|/ }; do systemctl is-enabled --quiet "$alt" 2>/dev/null && return 0; done
+  return 1
+}
+
+mode_window() {
+  exec 9<"$LOCK" || defer "blocco $LOCK non disponibile"
+  flock -w 30 9 || defer "un'altra manutenzione o un aggiornamento dei CLI è in corso"
+  [ -e "$HOLD" ] && defer "sospesa dopo un errore: $(cat "$HOLD")"
+  if [ -e "$PENDING" ]; then hold "la verifica dopo l'ultimo riavvio non è mai stata completata"; exit 1; fi
+  if [ "${ATTENDED:-0}" = 1 ]; then log "esecuzione presidiata da $(logname 2>/dev/null || echo '?')"
+  elif ! { safe_input "$INBOX/window.conf" && grep -qx 'APPROVED=yes' "$INBOX/window.conf"; }; then
+    [ "$DRY" = 1 ] || { log "finestra non approvata: nessuna azione"; exit 0; }
+    log "DRY_RUN: finestra non approvata, controllo comunque le condizioni"
+  fi
+  validate_list
+  local need_reboot=0; [ -e "$REBOOT_FLAG" ] && need_reboot=1
+  [ "${#PKGS[@]}" = 0 ] && [ "$need_reboot" = 0 ] && { log "niente da fare"; exit 0; }
+
+  local b why u
+  b=$(all_busy); [ -z "$b" ] || defer "lavori o sessioni attive: $b"
+  why=$(health) || defer "sistema non sano o backup non verificati: $why"
+  if command -v docker >/dev/null; then
+    u=$(docker ps --format '{{.Names}}' | xargs -r docker inspect --format '{{.Name}} {{.HostConfig.RestartPolicy.Name}}' \
+        | awk '$2 == "no" || $2 == "" {print $1}' | paste -sd' ')
+    [ -z "$u" ] || defer "container senza restart policy: $u"
+  fi
+  for u in $REQUIRED_UNITS ops-postboot.service; do
+    unit_enabled "$u" || defer "$u non abilitato all'avvio"
+  done
+  local net0; net0=$(net_fingerprint)
+  if [ "${ATTENDED:-0}" = 1 ] && [ "$DRY" != 1 ]; then
+    echo "Controlli superati. Aggiornamenti: ${PKGS[*]:-nessuno}. Riavvio: $([ "$need_reboot" = 1 ] && echo sì || echo 'solo se richiesto dopo gli aggiornamenti')."
+    read -r -p "Scrivi SI per procedere: " ans
+    [ "$ans" = "SI" ] || { log "annullata da chi presidiava"; exit 0; }
+  fi
+
+  if [ "${#PKGS[@]}" -gt 0 ]; then
+    if [ "$DRY" = 1 ]; then log "DRY_RUN: installerei ${PKGS[*]}"
+    else
+      dpkg-query -W -f='${Package} ${Version}\n' > "$STATE/window-before.txt"
+      save_rollback
+      log "installo: ${PKGS[*]}"
+      if DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y --only-upgrade \
+           -o DPkg::Lock::Timeout=900 -o Dpkg::Options::=--force-confold "${PKGS[@]}" >> "$STATE/apt-window.log" 2>&1; then
+        mv -f "$INBOX/approved-upgrades" "$INBOX/approved-upgrades.done-$(date -u +%Y%m%d%H%M)"
+        log "installati; verifica dei servizi"
+        if ! why=$(wait_healthy 10); then
+          log "servizi non sani dopo l'aggiornamento: $why"
+          restore_rollback && wait_healthy 10 >/dev/null && { hold "aggiornamento annullato (ripristinate le versioni precedenti, servizi di nuovo sani): $why"; exit 1; }
+          hold "servizi non sani dopo l'aggiornamento e ripristino non riuscito: $why"; exit 1
+        fi
+      else
+        hold "apt-get install fallito (vedi $STATE/apt-window.log); nessun riavvio"; exit 1
+      fi
+    fi
+    [ -e "$REBOOT_FLAG" ] && need_reboot=1
+  fi
+
+  [ "$need_reboot" = 1 ] || { log "completata senza riavvio"; exit 0; }
+  [ "$(net_fingerprint)" = "$net0" ] || { hold "la configurazione di rete generata è cambiata: riavvio annullato, serve una verifica"; exit 1; }
+  b=$(all_busy); [ -z "$b" ] || defer "riavvio rinviato, lavori o sessioni attive: $b"
+  local reason; reason=$(paste -sd' ' "$REBOOT_FLAG.pkgs" 2>/dev/null)
+  if [ "$DRY" = 1 ]; then log "DRY_RUN: riavvierei (motivo: ${reason:-n/d})"; exit 0; fi
+  echo "$(date -u +%s) $(uname -r) ${reason:-}" > "$PENDING"
+  log "riavvio (kernel attuale $(uname -r); motivo: ${reason:-n/d})"
+  systemctl reboot   # il blocco resta tenuto fino allo spegnimento
+}
+
+mode_postboot() {
+  [ -e "$PENDING" ] || { log "nessun riavvio di manutenzione da verificare"; exit 0; }
+  local old why; read -r _ old _ < "$PENDING"
+  if why=$(wait_healthy 20); then
+    log "OK dopo il riavvio (kernel $old -> $(uname -r))"; rm -f "$PENDING"; exit 0
+  fi
+  hold "servizi non sani 10 minuti dopo il riavvio (kernel $old -> $(uname -r)): $why"
+  rm -f "$PENDING"; exit 1
+}
+
+MODE=${1:-}
+case $MODE in
+  window)   load_conf; mode_window ;;
+  attended) [ -t 0 ] || { echo "attended va eseguito da un terminale"; exit 2; }; load_conf; ATTENDED=1; mode_window ;;
+  postboot) load_conf; mode_postboot ;;
+  procs)    load_conf; all_busy | tr ';' '\n' | grep . ; exit 0 ;;
+  origins)  load_conf; echo "$ORIGINS_RE"; exit 0 ;;
+  *) sed -n '2,13p' "$0"; exit 2 ;;
+esac

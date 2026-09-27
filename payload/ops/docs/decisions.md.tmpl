@@ -1,0 +1,59 @@
+# Decisioni — @@HOST@@
+
+Decisioni prese, con motivazione. Non riproporle salvo fatti nuovi rilevanti.
+
+Le voci "ereditata" sono decisioni consolidate sul server di origine (data originale) e valgono anche qui; sono state
+distribuite con il pacchetto di configurazione iniziale il @@DATE@@. Le decisioni proprie di questa macchina
+si aggiungono sotto, con la loro data.
+
+## Ereditate
+
+### 2026-09-23 — La conoscenza del server appartiene al server, non a un LLM (ereditata)
+- Memoria in un repository Git `/srv/ops`, Markdown puro; ingresso unico `AGENTS.md`, adattatori sottili per
+  agenti specifici (`CLAUDE.md` → `@AGENTS.md`). Nessun fatto importante solo in memorie proprietarie
+  (`~/.claude/…`): una pulizia automatica di Claude Code aveva cancellato cronologia e piani di una sessione.
+  CHANGELOG + `git log` come storia.
+
+### 2026-09-27 — Autonomia degli amministratori e manutenzione automatica (ereditata)
+- Politica unica per tutti gli strumenti in `AGENTS.md` ("Politica di amministrazione"): sola lettura sempre
+  autorizzata; aggiornamenti di sicurezza, ordinari della release attuale e dei CLI autorizzati con verifiche;
+  consenso solo per cancellazioni, cambi di release, spese e servizi esterni, SSH/rete/firewall/privilegi,
+  interruzioni fuori finestra, rischi concreti non recuperabili.
+- Meccanismi nativi (unattended-upgrades, systemd), nessun sudo senza password: il codice eseguito da root sta
+  in `/usr/local/sbin` (modificabile solo con sudo), gli agenti comunicano con la finestra solo tramite file di
+  dati validati in `/var/lib/ops-maint/inbox`.
+- Riavvii solo nella finestra approvata, con condizioni verificabili; ogni errore sospende la manutenzione
+  (`hold`) finché un agente non ha verificato.
+- Aggiornamenti dei pacchetti Ubuntu senza riavvio dei servizi (`NEEDRESTART_SUSPEND`) quando un riavvio è già
+  previsto.
+- Claude CLI sul canale `stable` (circa una settimana di ritardo, salta le release con regressioni).
+
+### 2026-09-27 — Finestra, primo riavvio presidiato, monitoraggio Healthchecks (ereditata)
+- Orario della finestra: domenica 04:30 UTC, con le condizioni di rinvio del runbook. **L'approvazione vale
+  per macchina**: per questa va registrata qui sotto quando @@OWNER@@ la dà.
+- Il primo riavvio si fa con @@OWNER@@ fisicamente presente (`ops-maint attended`); dopo un collaudo positivo la
+  finestra procede da sola (`APPROVED=yes`).
+- Monitoraggio esterno e notifiche: Healthchecks.io, piano gratuito, email. Solo segnali tecnici senza
+  contenuti; periodo 5 minuti, tolleranza 15 minuti; `/fail` per errori di salute o manutenzione sospesa.
+
+### 2026-09-27 — Antigravity CLI al posto del login personale di Gemini CLI (ereditata)
+- Google ha dismesso il login personale di Gemini CLI; Antigravity (`agy`) legge nativamente `AGENTS.md`.
+
+### 2026-09-24 — Impostazione dei backup (ereditata)
+- **Un solo scheduler**: cron (Borg alle 03:00, copia remota alle 04:00); `borgmatic.timer` del pacchetto
+  disabilitato.
+- **Cifratura del repository Borg: decisione rimandata**; il repository resta non cifrato.
+- **Copertura**: nel backup normale solo configurazioni e dati non sensibili; i segreti restano fuori fino a una
+  decisione separata.
+- **Database SQLite**: snapshot fail-safe e sincroni prima del backup (`before_backup`); se anche un solo
+  snapshot fallisce, il backup della notte si interrompe (meglio una notte persa e visibile che un database
+  vecchio archiviato come corrente). Scartato `sqlite_databases` di borgmatic 1.8.3 (dump in parallelo alla
+  lettura di borg).
+
+### 2026-08-02 — SSH: `PasswordAuthentication yes` dalla LAN (ereditata)
+- Mitigazione: porta 22 raggiungibile solo dalla LAN, rate-limit UFW (`LIMIT`), fail2ban. Riconsiderare solo se
+  è @@OWNER@@ a riaprire il tema. **Non riproporre.**
+
+## Di questa macchina
+
+(nessuna)

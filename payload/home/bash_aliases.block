@@ -1,0 +1,12 @@
+# >>> ops: strumenti di amministrazione (gestito da setup-server-linux; non modificare tra i marcatori) >>>
+# Gli strumenti partono sempre in /srv/ops (istruzioni: /srv/ops/AGENTS.md). Sottoprocesso ( ... ): alla fine
+# la shell resta nella directory di partenza. Binario originale: command claude|codex|gemini
+case ":$PATH:" in *":$HOME/.npm-global/bin:"*) ;; *) PATH="$HOME/.npm-global/bin:$PATH" ;; esac
+unalias claude codex gemini agy 2>/dev/null
+claude() { ( cd /srv/ops && command claude "$@" ); }
+codex()  { ( cd /srv/ops && command codex "$@" ); }
+gemini() { ( cd /srv/ops && command gemini "$@" ); }
+agy()    { ( cd /srv/ops && AGY_CLI_DISABLE_AUTO_UPDATE=true "$HOME/.local/bin/agy" "$@" ); }
+# Aggiornamenti dei CLI: solo tramite /srv/ops/bin/cli-update (timer settimanale), non in background.
+export AGY_CLI_DISABLE_AUTO_UPDATE=true
+# <<< ops <<<

@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# quick-check — controllo rapido del server, SOLA LETTURA, senza sudo.
+# Uso: /srv/ops/bin/quick-check      Exit code: 0 = tutto ok, 1 = attenzioni, 2 = errori.
+#      quick-check --gate              solo salute e backup (dischi, servizi, Docker, tunnel, backup): usato dalla
+#                                      manutenzione automatica, ignora gli avvisi di manutenzione stessi.
+# Parametri della macchina: /srv/ops/host.conf. Documentazione: /srv/ops/docs/runbooks/controllo-rapido.md
+set -u
+OPS=${OPS_DIR:-/srv/ops}
+# shellcheck disable=SC1091
+. "$OPS/host.conf" || { echo "manca $OPS/host.conf"; exit 2; }
+
+WARN_H=26          # età oltre cui un job notturno è "in ritardo"
+FAIL_H=50          # età oltre cui un job notturno è "fermo" (due notti perse)
+DISK_WARN=80
+DISK_FAIL=90
+MS=${MAINT_STATE:-/var/lib/ops-maint}
+
+GATE=0; [ "${1:-}" = "--gate" ] && GATE=1
+warnings=0; errors=0
+ok()   { printf '  OK         %s\n' "$*"; }
+warn() { printf '  ATTENZIONE %s\n' "$*"; warnings=$((warnings + 1)); }
+fail() { printf '  ERRORE     %s\n' "$*"; errors=$((errors + 1)); }
+
+now=$(date +%s)
+hours_since() { echo $(( (now - $1) / 3600 )); }
+age_check() {  # $1 = descrizione, $2 = epoch dell'ultimo evento riuscito
+  local h; h=$(hours_since "$2")
+  if   [ "$h" -ge "$FAIL_H" ]; then fail "$1: ultimo esito riuscito $h ore fa"
+  elif [ "$h" -ge "$WARN_H" ]; then warn "$1: ultimo esito riuscito $h ore fa"
+  else ok "$1: $h ore fa"; fi
+}
+last_cron_run() {  # epoch dell'ultimo avvio da cron di un comando che contiene $1
+  local line; line=$(journalctl -u cron --since "-4 days" -o short-iso --no-pager 2>/dev/null | grep -F "CMD (" | grep -F "$1" | tail -1)
+  [ -n "$line" ] && date -d "${line%% *}" +%s
+}
+
+echo "$HOST — controllo rapido $(date '+%F %H:%M')"
+
+if [ "$GATE" = 0 ] && [ -f "$OPS/docs/bootstrap/avanzamento.md" ] && grep -qx 'STATO: IN CORSO' "$OPS/docs/bootstrap/avanzamento.md"; then
+  echo "Configurazione iniziale"
+  warn "IN CORSO: i controlli non ancora configurati sono attesi (docs/bootstrap/avanzamento.md)"
+fi
+
+echo "Dischi"
+for m in $MOUNTS; do
+  if ! findmnt -n "$m" >/dev/null; then fail "$m non montato"; continue; fi
+  p=$(df --output=pcent "$m" | tail -1 | tr -dc '0-9')
+  if   [ "$p" -ge "$DISK_FAIL" ]; then fail "$m pieno al $p%"
+  elif [ "$p" -ge "$DISK_WARN" ]; then warn "$m pieno al $p%"
+  else ok "$m al $p%"; fi
+done
+
+echo "Servizi di sistema"
+inactive=""; for s in $SERVICES; do systemctl is-active --quiet "$s" || inactive="$inactive $s"; done
+[ -z "$inactive" ] && ok "attivi: $SERVICES" || fail "non attivi:$inactive"
+failed=$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | tr '\n' ' ')
+# In modalità --gate un guasto della manutenzione stessa non deve bloccare la manutenzione (resta visibile sotto).
+[ "$GATE" = 1 ] && failed=$(tr ' ' '\n' <<< "$failed" | grep -v '^ops-' | tr '\n' ' ' | sed 's/ *$//')
+[ -z "${failed// /}" ] && ok "nessuna unit fallita" || fail "unit fallite: $failed"
+if [ -n "$BORG_REPO" ]; then
+  systemctl is-enabled --quiet borgmatic.timer 2>/dev/null && warn "borgmatic.timer abilitato: doppio scheduler" \
+    || ok "scheduler Borg unico (solo cron)"
+fi
+
+if [ -n "$CONTAINERS" ] || command -v docker >/dev/null; then
+  echo "Docker"
+  if ! docker ps >/dev/null 2>&1; then
+    fail "Docker non raggiungibile da $(id -un)"
+  else
+    running=$(docker ps --format '{{.Names}}' | sort | tr '\n' ' ')
+    missing=""; for c in $CONTAINERS; do docker ps --format '{{.Names}}' | grep -qx "$c" || missing="$missing $c"; done
+    [ -z "$missing" ] && ok "container attivi: ${running:-nessuno}" || fail "container non attivi:$missing"
+    extra=$(docker ps -a --format '{{.Names}}' | grep -vxF -f <(tr ' ' '\n' <<< "$CONTAINERS" | grep .) | tr '\n' ' ')
+    [ -z "$extra" ] || warn "container non previsti: $extra"
+    restarting=$(docker ps --filter status=restarting --format '{{.Names}}' | tr '\n' ' ')
+    [ -z "$restarting" ] || fail "container in riavvio continuo: $restarting"
+  fi
+fi
+
+if [ -n "$TUNNEL_READY_URL" ]; then
+  echo "Tunnel"
+  ready=$(curl -s -m 5 "$TUNNEL_READY_URL" 2>/dev/null)
+  conns=$(grep -o '"readyConnections":[0-9]*' <<< "$ready" | cut -d: -f2)
+  if [ -n "$conns" ] && [ "$conns" -gt 0 ]; then ok "$conns connessioni attive"; else fail "tunnel non pronto"; fi
+fi
+
+echo "Backup"
+if [ -z "$BORG_REPO" ]; then
+  warn "backup non ancora configurato (BORG_REPO vuoto in host.conf)"
+else
+  if [ "$SQLITE_SNAPSHOTS" -gt 0 ]; then
+    snap=$(grep 'sqlite-snapshots' "$BORG_LOG" 2>/dev/null | tail -1)
+    if [[ "$snap" == *"sqlite-snapshots OK"* ]]; then
+      n=$(sed -E 's/.*OK: ([0-9]+) database.*/\1/' <<< "$snap")
+      ts=$(sed -E 's/.*\(([^)]*)\).*/\1/' <<< "$snap")
+      [ "$n" = "$SQLITE_SNAPSHOTS" ] || warn "snapshot SQLite: $n database invece di $SQLITE_SNAPSHOTS"
+      age_check "snapshot SQLite ($n database)" "$(date -d "$ts" +%s)"
+    else
+      fail "ultimo snapshot SQLite non riuscito (dettagli: sudo cat ${SNAPSHOT_DIR:-<cartella degli snapshot>}/STATUS)"
+    fi
+  fi
+  arch_line=$(grep -n 'Creating archive at' "$BORG_LOG" 2>/dev/null | tail -1)
+  if [ -z "$arch_line" ]; then
+    fail "nessun archivio Borg trovato nel log ($BORG_LOG)"
+  else
+    lineno=${arch_line%%:*}
+    arch=$(grep -oE "$HOST-[0-9T:.-]+" <<< "$arch_line")
+    after=$(tail -n +"$lineno" "$BORG_LOG")
+    if grep -q 'Successfully ran configuration file' <<< "$after" && ! grep -qE 'CRITICAL|An error occurred' <<< "$after"; then
+      age_check "archivio Borg $arch" "$(date -d "$(sed -E "s/^$HOST-//; s/T/ /; s/\..*//" <<< "$arch")" +%s)"
+    else
+      fail "ultimo run di borgmatic con errori (vedi $BORG_LOG)"
+    fi
+  fi
+  if [ -z "$OFFSITE" ]; then
+    warn "copia remota non configurata (OFFSITE vuoto in host.conf)"
+  else
+    off=$(last_cron_run "$OFFSITE_CRON_MATCH")
+    if [ -z "$off" ]; then
+      fail "copia remota: nessun avvio trovato negli ultimi 4 giorni"
+    elif awk -v d="$(date -d "@$off" +%Y/%m/%d)" '$1 >= d' "$OFFSITE_LOG" 2>/dev/null | grep -qE 'Attempt 3/3 failed|Failed to sync with'; then
+      fail "copia remota dell'ultima notte fallita (vedi $OFFSITE_LOG)"
+    else
+      age_check "copia remota" "$off"
+    fi
+  fi
+fi
+
+if [ "$GATE" = 1 ]; then
+  echo "Esito (gate)"
+  if   [ "$errors" -gt 0 ];   then echo "  ERRORI: $errors, attenzioni: $warnings"; exit 2
+  elif [ "$warnings" -gt 0 ]; then echo "  ATTENZIONI: $warnings"; exit 1
+  else echo "  SANO"; exit 0; fi
+fi
+
+echo "Manutenzione"
+UU_LOG=/var/log/unattended-upgrades/unattended-upgrades.log
+uu=$(grep -E 'All upgrades installed|No packages found|ERROR' "$UU_LOG" 2>/dev/null | tail -1)
+if [[ "$uu" == *ERROR* ]]; then warn "aggiornamenti di sicurezza automatici: errore (vedi $UU_LOG)"
+elif [ -n "$uu" ]; then age_check "aggiornamenti di sicurezza automatici" "$(date -d "${uu:0:19}" +%s)"
+else warn "aggiornamenti di sicurezza automatici: nessun esito nel log"; fi
+if [ -e /var/run/reboot-required ]; then
+  d=$(( (now - $(stat -c %Y /var/run/reboot-required)) / 86400 ))
+  why=$(paste -sd' ' /var/run/reboot-required.pkgs 2>/dev/null)
+  [ "$d" -ge 14 ] && warn "riavvio richiesto da $d giorni ($why)" || ok "riavvio richiesto da $d giorni ($why): previsto nella finestra"
+fi
+if [ ! -d "$MS/inbox" ]; then
+  warn "manutenzione automatica non installata (sudo /srv/ops/maint/install-maint install --admin $ADMIN)"
+else
+  [ -e "$MS/hold" ] && fail "manutenzione SOSPESA: $(cut -c1-150 "$MS/hold") — dopo la verifica: sudo rm $MS/hold"
+  up=$(cut -d. -f1 /proc/uptime)
+  [ -e "$MS/postboot-pending" ] && [ "$up" -gt 1200 ] && fail "verifica post-riavvio mai completata ($MS/postboot-pending)"
+  if ! systemctl is-enabled --quiet ops-maint-window.timer 2>/dev/null; then
+    warn "timer della finestra non attivo (install-maint enable window, dopo i prerequisiti)"
+  elif grep -qx 'APPROVED=yes' "$MS/inbox/window.conf" 2>/dev/null; then ok "finestra approvata: domenica 04:30 UTC"
+  else warn "finestra di manutenzione non approvata: i riavvii automatici sono disattivati"; fi
+  since=$(date -u -d '-22 days' '+%F')
+  n_def=$(awk -v s="$since" '$1 >= s && / window: RINVIO/' "$MS/history.log" 2>/dev/null | wc -l)
+  [ "$n_def" -ge 2 ] && warn "finestra rinviata $n_def volte in 3 settimane: $(grep ' window: RINVIO' "$MS/history.log" | tail -1 | cut -c1-140)"
+  last=$(grep -E ' (window|postboot): ' "$MS/history.log" 2>/dev/null | tail -1)
+  [ -n "$last" ] && echo "  (ultimo evento: ${last:0:140})"
+fi
+if crontab -l 2>/dev/null | grep -q "$OPS/bin/heartbeat" && [ -s "$MONITOR_CFG/healthchecks-ping-url" ]; then
+  ok "monitoraggio esterno attivo (Healthchecks, segnale ogni 5 minuti)"
+else
+  warn "monitoraggio esterno non configurato (docs/runbooks/monitoraggio-esterno.md)"
+fi
+CLI_LOG=$HOME/.local/state/ops/cli-update/cli-update.log
+cli=$(awk -v s="$(date -u -d '-8 days' '+%F')" '$1 >= s && /(VERIFICA FALLITA|ERRORE)/' "$CLI_LOG" 2>/dev/null | tail -1)
+[ -n "$cli" ] && warn "aggiornamento CLI con problemi: ${cli:20:140}"
+n_cli=$(awk -v s="$(date -u -d '-22 days' '+%F')" '$1 >= s && /(RINVIO|rinviato)/' "$CLI_LOG" 2>/dev/null | wc -l)
+[ "$n_cli" -ge 3 ] && warn "aggiornamento CLI rinviato $n_cli volte in 3 settimane (programma in uso o manutenzione in corso)"
+
+echo "Errori di sistema (ultime 24 ore)"
+n_err=$(journalctl -p err --since "-24h" --no-pager -q 2>/dev/null | wc -l)
+[ "$n_err" -eq 0 ] && ok "nessuno" || warn "$n_err righe con priorità 'err' (journalctl -p err --since -24h)"
+
+echo "Esito"
+if   [ "$errors" -gt 0 ];   then echo "  ERRORI: $errors, attenzioni: $warnings"; exit 2
+elif [ "$warnings" -gt 0 ]; then echo "  ATTENZIONI: $warnings"; exit 1
+else echo "  TUTTO OK"; exit 0; fi

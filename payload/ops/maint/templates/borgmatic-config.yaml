@@ -1,0 +1,35 @@
+# Modello di /etc/borgmatic/config.yaml (dalla configurazione del server di origine, senza i servizi).
+# Sostituire <BORG_REPO>, aggiungere dati e configurazioni NON sensibili dei servizi della macchina,
+# escludere i file con segreti. Validare: sudo borgmatic config validate
+repositories:
+  - path: <BORG_REPO>
+source_directories:
+  # - <cartella degli snapshot SQLite>       # solo se si usa before_backup (sezione 10.1)
+  - /srv/ops
+  - /root/.borgmatic
+  - /etc/borgmatic
+  - /etc/cron.d
+  - /etc/logrotate.d
+  - /etc/ufw
+  - /etc/fstab
+  # - /etc/netplan/<file della sezione 7.1>  # solo il file senza segreti (niente WiFi)
+  - /etc/ssh/sshd_config
+  - /etc/ssh/sshd_config.d
+  # - /etc/docker/daemon.json                # se si usa Docker
+  - /etc/apt/sources.list.d
+  - /usr/local/bin
+  - /etc/ops-maint.conf                     # parametri della manutenzione (sorgenti di script e unit: /srv/ops)
+  # dati e configurazioni non sensibili dei servizi: aggiungere qui
+exclude_patterns: []
+  # file dei servizi che contengono segreti: aggiungere qui
+# before_backup:
+#   - /usr/local/bin/sqlite-snapshots.sh       # solo con database SQLite (script da estrarre, vedi README)
+archive_name_format: '{hostname}-{now:%Y-%m-%dT%H:%M:%S.%f}'
+compression: zstd,8
+checks:
+  - name: repository
+  - name: archives
+keep_within: 14d
+keep_daily: 7
+keep_weekly: 4
+keep_monthly: 6

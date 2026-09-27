@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# healthchecks — configura e verifica il monitoraggio esterno su Healthchecks.io (utente amministratore, senza sudo).
+#   bin/healthchecks setup          crea/aggiorna il controllo con il nome della macchina, salva l'URL di ping, installa il cron
+#   bin/healthchecks status         stato del controllo (up, grace, down, paused, new) e ultimo segnale
+#   bin/healthchecks test-start     prova dell'allarme: periodo e tolleranza a 1 minuto, segnali sospesi
+#   bin/healthchecks test-end       fine prova: segnali ripresi, un ping immediato, valori normali
+# Chiave API (read-write) in $MONITOR_CFG/healthchecks-api-key (0600): la inserisce l'amministratore, non va
+# mai nel repository né negli output. Documentazione: /srv/ops/docs/runbooks/monitoraggio-esterno.md
+set -euo pipefail
+OPS=${OPS_DIR:-/srv/ops}
+# shellcheck disable=SC1091
+. "$OPS/host.conf"
+CFG=$MONITOR_CFG
+KEY_FILE=$CFG/healthchecks-api-key URL_FILE=$CFG/healthchecks-ping-url CHECK_FILE=$CFG/healthchecks-check
+API=https://healthchecks.io/api/v3
+NAME=$HOST
+TIMEOUT=300     # periodo atteso tra i segnali: il cron ne invia uno ogni 5 minuti
+GRACE=900       # tolleranza: allarme dopo 20 minuti senza segnali (un riavvio di manutenzione dura 2-5 minuti)
+CRON_LINE="2-59/5 * * * * $OPS/bin/heartbeat"   # sfasato: mai insieme alla finestra (04:30) o a cli-update (05:15)
+DESC="$HOST: segnale ogni 5 minuti da $OPS/bin/heartbeat. /fail = errore di salute o manutenzione sospesa."
+
+[ -r "$KEY_FILE" ] || { echo "manca $KEY_FILE (vedi il runbook)"; exit 1; }
+api() {  # $1 metodo, $2 percorso, $3 corpo JSON opzionale; la chiave passa da file, mai sulla riga di comando
+  curl -fsS -m 20 -X "$1" -H @<(printf 'X-Api-Key: %s\n' "$(tr -d '[:space:]' < "$KEY_FILE")") \
+    ${3:+-H 'Content-Type: application/json' --data "$3"} "$API$2"
+}
+check_uuid() { [ -s "$CHECK_FILE" ] || { echo "controllo non configurato: bin/healthchecks setup"; exit 1; }; cat "$CHECK_FILE"; }
+set_times() {  # $1 timeout, $2 grace
+  api POST "/checks/$(check_uuid)" "{\"timeout\": $1, \"grace\": $2}" > /dev/null
+}
+cron_others()  { { crontab -l 2>/dev/null || true; } | { grep -vF "$OPS/bin/heartbeat" || true; }; }  # nessun crontab = vuoto
+cron_install() { { cron_others; echo "$CRON_LINE"; } | crontab -; }
+cron_remove()  { cron_others | crontab -; }
+
+case ${1:-} in
+  setup)
+    install -d -m 700 "$CFG"
+    body=$(python3 -c 'import json,sys; print(json.dumps({"name":sys.argv[1],"desc":sys.argv[2],"timeout":int(sys.argv[3]),
+      "grace":int(sys.argv[4]),"channels":"*","tags":sys.argv[1],"unique":["name"]}))' "$NAME" "$DESC" "$TIMEOUT" "$GRACE")
+    resp=$(api POST /checks/ "$body")
+    ping_url=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ping_url"])' <<< "$resp")
+    uuid=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["update_url"].rstrip("/").rsplit("/",1)[1])' <<< "$resp")
+    ( umask 077; printf '%s\n' "$ping_url" > "$URL_FILE"; printf '%s\n' "$uuid" > "$CHECK_FILE" )
+    cron_install
+    "$OPS/bin/heartbeat" && echo "controllo $NAME pronto: periodo ${TIMEOUT}s, tolleranza ${GRACE}s, primo segnale inviato"
+    echo "integrazioni collegate: $(api GET /channels/ | python3 -c 'import json,sys; print(", ".join(c["kind"] for c in json.load(sys.stdin)["channels"]) or "NESSUNA")')"
+    ;;
+  status)
+    api GET "/checks/$(check_uuid)" | python3 -c 'import json,sys; c=json.load(sys.stdin)
+print("stato: {status}  ultimo segnale: {last_ping}  periodo: {timeout}s  tolleranza: {grace}s  segnali: {n_pings}".format(**c))'
+    crontab -l 2>/dev/null | grep -F "$OPS/bin/heartbeat" || echo "cron: assente"
+    ;;
+  test-start)
+    cron_remove; set_times 60 60
+    echo "prova avviata: segnali sospesi, allarme atteso entro 2-3 minuti dall'ultimo segnale"
+    ;;
+  test-end)
+    set_times "$TIMEOUT" "$GRACE"; cron_install; "$OPS/bin/heartbeat"
+    echo "prova terminata: segnale inviato, valori normali ripristinati"
+    ;;
+  *) sed -n '2,8p' "$0"; exit 2 ;;
+esac

@@ -1,0 +1,16 @@
+[Unit]
+Description=ops: verifica dopo il riavvio della finestra di manutenzione
+Documentation=file:///srv/ops/docs/runbooks/manutenzione.md
+ConditionPathExists=/var/lib/ops-maint/postboot-pending
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ops-maint postboot
+TimeoutStartSec=20min
+PrivateTmp=yes
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

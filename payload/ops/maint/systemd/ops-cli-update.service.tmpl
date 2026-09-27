@@ -1,0 +1,13 @@
+[Unit]
+Description=ops: aggiornamento controllato dei CLI amministrativi
+Documentation=file:///srv/ops/docs/runbooks/manutenzione.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=@@ADMIN@@
+ExecStart=/srv/ops/bin/cli-update
+TimeoutStartSec=1h
+NoNewPrivileges=yes
+PrivateTmp=yes

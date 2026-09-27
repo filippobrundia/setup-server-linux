@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# heartbeat — segnale di vita per il monitoraggio esterno (Healthchecks.io). Utente amministratore, crontab ogni 5 min.
+# Invia SOLO un segnale tecnico (richiesta HTTPS senza corpo): "ok" oppure "/fail". Nessun log né contenuto.
+#   ok     server acceso e sano (quick-check --gate senza ERRORE, manutenzione non sospesa)
+#   /fail  due controlli consecutivi con ERRORE, oppure manutenzione sospesa (hold)
+# Durante la manutenzione (blocco tenuto) o subito dopo un riavvio di manutenzione invia solo "ok" (vivo):
+# ci pensano la finestra e la verifica post-riavvio. Se il server è spento o isolato non arriva nulla e
+# Healthchecks avvisa per email dopo periodo + tolleranza.
+# URL di ping in $MONITOR_CFG/healthchecks-ping-url (0600, fuori dal repository; vedi host.conf).
+# Documentazione: /srv/ops/docs/runbooks/monitoraggio-esterno.md
+set -u
+OPS=${OPS_DIR:-/srv/ops}
+# shellcheck disable=SC1091
+. "$OPS/host.conf" || exit 1
+CONF=${HEARTBEAT_URL_FILE:-$MONITOR_CFG/healthchecks-ping-url}
+STATE_DIR=$HOME/.local/state/ops; mkdir -p "$STATE_DIR"
+FAILS=$STATE_DIR/heartbeat-fails
+MS=/var/lib/ops-maint
+LOCK=/run/lock/ops-maint.lock
+
+[ -r "$CONF" ] || exit 0
+url=$(head -c 200 "$CONF")
+[[ "$url" =~ ^https://hc-ping\.com/[A-Za-z0-9/_-]+$ ]] || { echo "URL di ping non valido in $CONF" >&2; exit 1; }
+ping() { curl -fsS -m 10 --retry 3 -o /dev/null -A "$HOST-heartbeat" "$url$1"; }
+
+# Manutenzione in corso o appena fatta: solo segnale di vita.
+if [ -e "$MS/postboot-pending" ] || ! flock -n "$LOCK" true 2>/dev/null; then ping ""; exit; fi
+
+state=ok
+[ -e "$MS/hold" ] && state=fail
+rc=0; "$OPS/bin/quick-check" --gate > /dev/null 2>&1 || rc=$?
+if [ "$rc" -ge 2 ]; then
+  n=$(( $(cat "$FAILS" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAILS"
+  [ "$n" -ge 2 ] && state=fail
+else
+  echo 0 > "$FAILS"
+fi
+if [ "$state" = fail ]; then ping /fail; else ping ""; fi

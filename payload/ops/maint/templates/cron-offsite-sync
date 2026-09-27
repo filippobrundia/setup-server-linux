@@ -1,0 +1,4 @@
+# /etc/cron.d/offsite-sync — copia del repository Borg sulla destinazione remota, dopo il backup delle 03:00.
+# Sostituire <BORG_REPO> e <REMOTE:percorso> (remote rclone di root, credenziali fuori dal repository e dal backup).
+# Opzioni identiche al server di origine (storage S3 compatibile). ATTENZIONE: "sync" rende la destinazione uno specchio.
+0 4 * * * root rclone sync <BORG_REPO> <REMOTE:percorso> --fast-list --transfers=4 --checkers=8 --s3-chunk-size=128M --s3-upload-concurrency=4 --s3-no-check-bucket >> /var/log/offsite-sync.log 2>&1

@@ -1,0 +1,2 @@
+# Blocco condiviso della manutenzione (finestra, aggiornamento CLI, install-maint). Installato da install-maint.
+f /run/lock/ops-maint.lock 0644 root root -

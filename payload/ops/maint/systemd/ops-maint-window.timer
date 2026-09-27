@@ -1,0 +1,10 @@
+[Unit]
+Description=ops: finestra di manutenzione settimanale (domenica 04:30 UTC)
+
+[Timer]
+OnCalendar=Sun *-*-* 04:30:00 UTC
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

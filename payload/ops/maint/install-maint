@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# install-maint — installa e attiva, un passo alla volta, la manutenzione automatica (root).
+# Estratto generico del blocco "manutenzione" dell'installatore originale: non installa pacchetti,
+# non tocca repository APT, rete o servizi, non riavvia nulla.
+#
+#   sudo /srv/ops/maint/install-maint install --admin UTENTE   file, unit, stato; NESSUNA unit abilitata
+#   sudo /srv/ops/maint/install-maint enable postboot          verifica dopo i riavvii della finestra
+#   sudo /srv/ops/maint/install-maint enable window            timer della finestra (serve anche APPROVED=yes)
+#   sudo /srv/ops/maint/install-maint enable cli-update        timer dell'aggiornamento dei CLI
+#   sudo /srv/ops/maint/install-maint disable window|cli-update|postboot
+#   /srv/ops/maint/install-maint status                        sola lettura, anche senza sudo
+#
+# Rieseguibile: ogni file identico viene saltato; un file diverso viene sostituito (con copia .bak-<data>)
+# solo se è stato installato da questo script, altrimenti si ferma senza toccarlo. /etc/ops-maint.conf e
+# window.conf non vengono mai sovrascritti. Ogni "enable" controlla prima i propri prerequisiti.
+# Documentazione: /srv/ops/docs/runbooks/manutenzione.md
+set -euo pipefail
+export LC_ALL=C.UTF-8
+SRC=$(cd "$(dirname "$0")" && pwd)
+CONF=/etc/ops-maint.conf
+STATE=/var/lib/ops-maint
+INBOX=$STATE/inbox
+LOCK=/run/lock/ops-maint.lock
+UNITDIR=/etc/systemd/system
+TS=$(date -u +%Y%m%d-%H%M%S)
+UNITS="ops-maint-window.service ops-maint-window.timer ops-postboot.service ops-cli-update.service ops-cli-update.timer"
+
+die()  { echo "STOP: $*" >&2; exit 3; }
+have_systemd() { [ -d /run/systemd/system ]; }
+conf_get() { awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$CONF"; }
+ours() {  # il file esistente è stato installato da questo pacchetto?
+  head -n 4 "$1" | grep -qE '(ops-maint|Description=ops:)'
+}
+put() {  # $1 sorgente (già pronta), $2 destinazione, $3 modo
+  if [ -e "$2" ] && cmp -s "$1" "$2"; then echo "  invariato: $2"; return; fi
+  if [ -e "$2" ]; then
+    ours "$2" || die "$2 esiste e non è stato installato da install-maint: nessuna modifica"
+    cp -a "$2" "$2.bak-$TS"; echo "  copia di sicurezza: $2.bak-$TS"
+  fi
+  install -o root -g root -m "$3" "$1" "$2"; echo "  installato: $2"
+}
+render() {  # $1 template → stdout; solo i segnaposto noti, valori già validati
+  local s; s=$(cat "$1")
+  s=${s//@@ADMIN@@/$ADMIN}; s=${s//@@DATE@@/$(date -u +%F)}
+  s=${s//@@UBUNTU_VERSION@@/$UBUNTU_VERSION}; s=${s//@@UBUNTU_CODENAME@@/$UBUNTU_CODENAME}
+  printf '%s\n' "$s"
+}
+valid_admin() {
+  [[ "$1" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "nome utente non valido: $1"
+  local uid; uid=$(id -u "$1" 2>/dev/null) || die "utente $1 inesistente"
+  [ "$uid" -ge 1000 ] || die "utente $1 non è un utente normale (uid $uid)"
+  local g; g=" $(id -nG "$1") "; [[ "$g" == *" sudo "* ]] || die "utente $1 non è nel gruppo sudo"
+}
+
+cmd_install() {
+  [ "$(id -u)" = 0 ] || die "va eseguito con sudo"
+  ADMIN=""
+  while [ $# -gt 0 ]; do case $1 in --admin) ADMIN=${2:-}; shift 2 ;; *) die "opzione sconosciuta: $1" ;; esac; done
+  if [ -z "$ADMIN" ] && [ -e "$CONF" ]; then ADMIN=$(conf_get ADMIN); fi
+  [ -n "$ADMIN" ] || die "serve --admin UTENTE"
+  valid_admin "$ADMIN"
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  UBUNTU_VERSION=$VERSION_ID; UBUNTU_CODENAME=$VERSION_CODENAME
+  [[ "$UBUNTU_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] && [[ "$UBUNTU_CODENAME" =~ ^[a-z]+$ ]] || die "versione Ubuntu non riconosciuta"
+
+  echo "== PRECHECK"
+  bash -n "$SRC/ops-maint"; bash -n "$SRC/../bin/quick-check"; bash -n "$SRC/../bin/cli-update"
+  if [ -e "$CONF" ]; then
+    [ "$(conf_get ADMIN)" = "$ADMIN" ] || die "$CONF indica ADMIN=$(conf_get ADMIN), diverso da $ADMIN"
+  fi
+  tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+  for u in $UNITS; do
+    if [ -e "$SRC/systemd/$u.tmpl" ]; then render "$SRC/systemd/$u.tmpl" > "$tmp/$u"; else cp "$SRC/systemd/$u" "$tmp/$u"; fi
+    if [ -e "$UNITDIR/$u" ] && ! cmp -s "$tmp/$u" "$UNITDIR/$u" && ! ours "$UNITDIR/$u"; then die "$UNITDIR/$u esiste e non è nostro"; fi
+  done
+  for f in /usr/local/sbin/ops-maint /etc/tmpfiles.d/ops-maint.conf; do
+    if [ -e "$f" ] && ! ours "$f"; then die "$f esiste e non è nostro"; fi
+  done
+
+  echo "== BLOCCO"
+  if [ -e "$LOCK" ]; then exec 9<"$LOCK"; flock -w 30 9 || die "manutenzione o aggiornamento dei CLI in corso"; fi
+
+  echo "== MODIFICA: file (nessuna unit abilitata)"
+  install -d -m 0755 /usr/local/sbin /etc/tmpfiles.d "$UNITDIR"
+  put "$SRC/ops-maint" /usr/local/sbin/ops-maint 0755
+  put "$SRC/ops-maint.tmpfiles" /etc/tmpfiles.d/ops-maint.conf 0644
+  for u in $UNITS; do put "$tmp/$u" "$UNITDIR/$u" 0644; done
+  if [ -e "$CONF" ]; then echo "  invariato (mai sovrascritto): $CONF"
+  else render "$SRC/ops-maint.conf.tmpl" > "$tmp/conf"; install -o root -g root -m 0644 "$tmp/conf" "$CONF"; echo "  creato: $CONF"; fi
+  install -d -o root -g root -m 0755 "$STATE" "$STATE/rollback"
+  install -d -o root -g "$ADMIN" -m 2770 "$INBOX"
+  if [ ! -e "$INBOX/window.conf" ]; then
+    printf '%s\n' "# Finestra di manutenzione: solo la riga APPROVED=yes la attiva (approvazione dell'amministratore" \
+      "# registrata in docs/decisions.md, dopo il primo riavvio presidiato riuscito)." "APPROVED=no" > "$INBOX/window.conf"
+    chown "$ADMIN:$ADMIN" "$INBOX/window.conf"; chmod 0664 "$INBOX/window.conf"; echo "  creato: $INBOX/window.conf (APPROVED=no)"
+  fi
+  if have_systemd; then
+    systemd-tmpfiles --create /etc/tmpfiles.d/ops-maint.conf
+    systemctl daemon-reload
+  else
+    mkdir -p "$(dirname "$LOCK")"; touch "$LOCK"; chmod 0644 "$LOCK"; echo "  systemd non attivo: daemon-reload saltato"
+  fi
+  echo "$(date -u '+%F %T') install-maint: installata (nessuna unit abilitata)" >> "$STATE/history.log"
+
+  echo "== VERIFY"
+  /usr/local/sbin/ops-maint origins >/dev/null && echo "  $CONF leggibile e valido"
+  cmd_status
+}
+
+cmd_status() {
+  local u st
+  for u in ops-postboot.service ops-maint-window.timer ops-cli-update.timer; do
+    if have_systemd; then st=$(systemctl is-enabled "$u" 2>/dev/null || true); else st="(systemd non attivo)"; fi
+    printf '  %-26s %s\n' "$u" "${st:-assente}"
+  done
+  printf '  %-26s %s\n' "window.conf" "$(grep -E '^APPROVED=' "$INBOX/window.conf" 2>/dev/null || echo assente)"
+  [ -e "$STATE/hold" ] && echo "  HOLD: $(cat "$STATE/hold")"
+  return 0
+}
+
+cmd_enable() {
+  [ "$(id -u)" = 0 ] || die "va eseguito con sudo"
+  have_systemd || die "systemd non attivo"
+  [ -x /usr/local/sbin/ops-maint ] && [ -e "$CONF" ] || die "prima: install-maint install"
+  /usr/local/sbin/ops-maint origins >/dev/null || die "$CONF non valido"
+  ADMIN=$(conf_get ADMIN)
+  case ${1:-} in
+    postboot)
+      systemctl enable ops-postboot.service ;;
+    window)
+      systemctl is-enabled --quiet ops-postboot.service || die "prima: install-maint enable postboot"
+      runuser -u "$ADMIN" -- /srv/ops/bin/quick-check --gate >/dev/null 2>&1 \
+        || die "quick-check --gate non è pulito: completare backup e controlli prima di attivare la finestra"
+      systemctl enable --now ops-maint-window.timer
+      grep -qx 'APPROVED=yes' "$INBOX/window.conf" || echo "  nota: finché window.conf non contiene APPROVED=yes la finestra non fa nulla" ;;
+    cli-update)
+      runuser -u "$ADMIN" -- /srv/ops/bin/cli-update --verify \
+        || die "verifica dei CLI non superata (login, permessi o caricamento di AGENTS.md): timer non attivato"
+      systemctl enable --now ops-cli-update.timer ;;
+    *) die "enable: postboot | window | cli-update" ;;
+  esac
+  echo "$(date -u '+%F %T') install-maint: abilitato $1" >> "$STATE/history.log"
+  cmd_status
+}
+
+cmd_disable() {
+  [ "$(id -u)" = 0 ] || die "va eseguito con sudo"
+  case ${1:-} in
+    postboot)   systemctl disable ops-postboot.service ;;
+    window)     systemctl disable --now ops-maint-window.timer ;;
+    cli-update) systemctl disable --now ops-cli-update.timer ;;
+    *) die "disable: postboot | window | cli-update" ;;
+  esac
+  echo "$(date -u '+%F %T') install-maint: disabilitato $1" >> "$STATE/history.log"
+  cmd_status
+}
+
+case ${1:-} in
+  install) shift; cmd_install "$@" ;;
+  status)  cmd_status ;;
+  enable)  cmd_enable "${2:-}" ;;
+  disable) cmd_disable "${2:-}" ;;
+  *) sed -n '2,17p' "$0"; exit 2 ;;
+esac

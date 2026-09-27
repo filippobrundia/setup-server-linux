@@ -1,0 +1,15 @@
+# /etc/ops-maint.conf — parametri della manutenzione automatica (root:root 0644).
+# Letto riga per riga da /usr/local/sbin/ops-maint: solo le chiavi sotto, nessun comando.
+# Creato da install-maint il @@DATE@@; si modifica solo con sudo, registrando la modifica in /srv/ops.
+ADMIN=@@ADMIN@@
+QUICK_CHECK=/srv/ops/bin/quick-check
+UBUNTU_VERSION=@@UBUNTU_VERSION@@
+UBUNTU_CODENAME=@@UBUNTU_CODENAME@@
+# Unit che devono essere abilitate all'avvio perché la finestra riavvii ("a|b" = una delle due).
+# Aggiungere docker.service e i servizi essenziali quando la checklist li installa.
+REQUIRED_UNITS=ssh.socket|ssh.service
+# Origini APT aggiuntive ammesse nella finestra (espressione regolare sulle etichette di apt-get -s), es.
+# cloudflared:pkg\.cloudflare\.com — vuoto = solo Ubuntu e Docker CE.
+EXTRA_ORIGINS_RE=
+# Processi aggiuntivi che rinviano la finestra (espressione regolare sugli argomenti), es. /usr/local/bin/mio-job
+EXTRA_BUSY_ARG_RE=

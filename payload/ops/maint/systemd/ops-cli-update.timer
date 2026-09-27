@@ -1,0 +1,10 @@
+[Unit]
+Description=ops: aggiornamento settimanale dei CLI amministrativi (domenica 05:15 UTC)
+
+[Timer]
+OnCalendar=Sun *-*-* 05:15:00 UTC
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,2 @@
+# /etc/cron.d/borgmatic — backup notturno (unico scheduler: borgmatic.timer del pacchetto disabilitato)
+0 3 * * * root /usr/local/bin/run-borgmatic.sh >> /var/log/borgmatic.log 2>&1

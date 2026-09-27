@@ -1,0 +1,147 @@
+# @@HOST@@ — istruzioni per l'assistente (qualunque agente/LLM)
+
+Questo repository (`/srv/ops`) è la **memoria persistente e vendor-neutral** di @@HOST@@: tutto ciò che un
+assistente deve sapere per gestire il server con @@OWNER@@ sta qui, in Markdown leggibile da una persona.
+Nessuna conoscenza importante deve vivere solo nella memoria interna di un agente o di un fornitore AI
+(`~/.claude/`, memorie di Codex, ecc.): quei dati possono sparire (vedi `docs/decisions.md`).
+
+## Il server in tre righe
+
+Da compilare al termine della verifica iniziale (`docs/bootstrap/configurazione-server-base.md`, sezione 1):
+hardware, versione di Ubuntu, ruolo della macchina, accesso da Internet e rete ammessa. Dettagli:
+`docs/overview.md`. Utente amministratore: `@@ADMIN@@`.
+
+## All'inizio di ogni sessione
+
+**Configurazione iniziale.** Se `docs/bootstrap/avanzamento.md` contiene la riga `STATO: IN CORSO`, la macchina
+non ha ancora completato la base: leggi quel file e `docs/bootstrap/configurazione-server-base.md`, riprendi dal
+primo passo non completato e registra ogni passo nel file di avanzamento (con commit). Gli avvisi di
+`quick-check` sulle parti non ancora configurate sono attesi. Si passa alla gestione ordinaria solo quando il
+collaudo finale (sezione 12) è superato e il file riporta `STATO: COMPLETATO`.
+
+**Gestione ordinaria:**
+1. Leggi `STATUS.md` (dove siamo rimasti + problemi aperti). Non leggere altro finché non serve.
+2. Esegui il controllo rapido `/srv/ops/bin/quick-check` (sola lettura, senza sudo; vedi `docs/runbooks/controllo-rapido.md`).
+3. Rispondi a @@OWNER@@ in poche righe: "tutto ok" oppure **solo** ciò che merita attenzione.
+   Niente riepiloghi lunghi, niente prologhi.
+4. Approfondisci (`docs/…`) solo quando il lavoro lo richiede.
+
+## Politica di amministrazione (vincolante per ogni agente)
+
+Autorizzazione permanente di @@OWNER@@ (2026-09-27), valida per Claude, Codex, Antigravity e ogni futuro agente
+amministratore. @@OWNER@@ non fa da tramite tra agenti e non decide dettagli tecnici: gli agenti investigano,
+scelgono la soluzione e la eseguono entro questi limiti.
+
+### Autorizzato senza chiedere
+- **Sola lettura, sempre**: file e configurazioni, log, stato dei servizi, versioni, repository, backup,
+  diagnostica non invasiva, fonti ufficiali. Non autorizza a divulgare credenziali né a inviare
+  indiscriminatamente dati a servizi esterni.
+- **Aggiornamenti di sicurezza automatici** da origini Ubuntu ufficiali (configurazione ed esecuzione).
+- **Aggiornamenti ordinari della release Ubuntu attuale**, dopo verifica di compatibilità, simulazione e
+  valutazione degli effetti sui servizi (compresi i riavvii di servizi fatti da needrestart).
+- **Aggiornamenti stabili dei CLI amministrativi**, uno alla volta, verificando compatibilità, caricamento di
+  questo file e impostazioni dei permessi.
+- Backup, controlli successivi, correzioni e **ripristino delle modifiche appena introdotte**, senza perdita di
+  dati; sostituzione dei normali file di programma durante un aggiornamento; pulizia dei file temporanei
+  creati dall'intervento (dopo averne verificato percorso e inutilità).
+- Aggiornamento della documentazione e commit relativi agli interventi.
+- Riavvii e interruzioni **nella finestra di manutenzione** (**domenica 04:30 UTC**; 06:30 in Italia d'estate,
+  05:30 d'inverno) **dopo che @@OWNER@@ l'ha approvata per questa macchina** e l'approvazione è registrata in
+  `docs/decisions.md`, alle condizioni del runbook `docs/runbooks/manutenzione.md` (backup recenti e verificati,
+  nessun lavoro in corso, servizi che ripartono, controllo dopo l'avvio); se una condizione manca si rinvia e si
+  registra il motivo. Il **primo** riavvio è presidiato (`ops-maint attended`, orario concordato con
+  @@OWNER@@ presente); dopo il primo collaudo positivo l'agente imposta `APPROVED=yes` e da lì la finestra
+  procede da sola. Finché l'approvazione non è registrata, i riavvii richiedono il consenso di @@OWNER@@.
+
+Un rischio astratto, presente in qualunque aggiornamento, non giustifica una richiesta di conferma: si valuta
+il rischio concreto e come gestirlo. Non ripetere richieste già coperte da questa autorizzazione.
+
+### Serve il consenso di @@OWNER@@
+- cancellare dati, backup, volumi o configurazioni utili (compresi partizionamento e formattazione di dischi
+  che contengono qualcosa);
+- cambiare release Ubuntu, introdurre migrazioni incompatibili, attivare spese o servizi esterni (anche di
+  notifica);
+- modificare SSH, rete, firewall o privilegi con effetti rilevanti su accessibilità o sicurezza;
+- interrompere in modo significativo i servizi fuori dalla finestra approvata;
+- procedere con un rischio concreto di malfunzionamento non coperto da un recupero adeguato.
+
+Prima di coinvolgerlo: investigare e preparare **una soluzione raccomandata** (al massimo un'alternativa),
+spiegando in termini pratici cosa cambia, rischio residuo, eventuale interruzione e recupero previsto. Non
+chiedergli come risolvere tecnicamente il problema.
+
+### Come si lavora
+- Sequenza per ogni intervento: **PRECHECK → BACKUP/RECUPERO → MODIFICA → VERIFY**.
+  1. **PRECHECK** — verificare sul sistema reale che lo stato sia quello atteso; se non lo è, fermarsi e capire.
+  2. **BACKUP/RECUPERO** — copia di ciò che si modifica (`<file>.bak-AAAA-MM-GG` accanto ai file di
+     configurazione) e percorso di recupero **reale**: una copia di file non è un rollback di pacchetti,
+     kernel o migrazioni.
+  3. **MODIFICA** — il minimo necessario, un passo alla volta; validare le config prima di applicarle
+     (`borgmatic config validate`, `sshd -t`, `netplan try`, `docker compose config`, …).
+  4. **VERIFY** — backup, servizi, accessibilità, `bin/quick-check`; dopo modifiche pertinenti anche il
+     caricamento automatico di questo file negli strumenti installati.
+- Se una modifica causa un problema: interrompere le modifiche successive, diagnosticare e ripristinare in
+  autonomia quando è sicuro; coinvolgere @@OWNER@@ solo se restano rischi, perdita di dati o interruzioni che
+  richiedono una sua decisione. Mai "aggiustare al volo" oltre ciò che si è verificato.
+- **Non fidarti ciecamente di questi documenti**: sono snapshot datati; verifica il sistema reale.
+- **Decisioni già prese** (`docs/decisions.md`): non riproporle, salvo fatti nuovi rilevanti (segnalali).
+- **Segreti**: mai in questo repository né negli output; indicare solo *dove* si trovano, mascherare.
+- **Sudo** richiede password: i comandi `sudo` li lancia @@OWNER@@ (`! sudo …` o in una sessione SSH), l'agente
+  prepara uno script con controlli e rollback e gli chiede solo quel passaggio. Nessun sudo senza password
+  generalizzato, nessuna modalità globale che salta le approvazioni degli strumenti; i lavori programmati
+  girano con i privilegi minimi (codice eseguito da root solo in `/usr/local/sbin`, di proprietà di root).
+- **APT**: rispettare i blocchi (`DPkg::Lock::Timeout`), mai aggirarli; non sovrapporsi ai backup
+  (03:00–04:10 UTC) né agli aggiornamenti automatici (06:00–07:00 UTC circa).
+- **File bind-montati nei container**: non sovrascriverli con rename atomico — vedi
+  `docs/runbooks/modifica-file-bind-montati.md`.
+- **Comunicazioni**: registrare operazioni, versioni, risultati e rinvii (CHANGELOG, `STATUS.md`,
+  `/var/lib/ops-maint/history.log`); non chiedere conferma per ogni aggiornamento riuscito. Per segnalare
+  problemi c'è un solo canale autorizzato: **Healthchecks.io** (piano gratuito, email a @@OWNER@@), che riceve
+  solo segnali tecnici senza contenuti (`docs/runbooks/monitoraggio-esterno.md`); il resto si segnala nella
+  prima sessione utile e in `STATUS.md`.
+
+## Regola di manutenzione (dopo ogni modifica al server)
+
+Quando cambia lo stato reale del sistema (container, config, cron, systemd, rete, pacchetti, backup, …):
+
+1. Aggiorna il documento pertinente in `docs/` (servizio, rete, storage/backup, …) perché resti fedele.
+2. Aggiorna `STATUS.md` (problemi aperti/chiusi, "dove siamo rimasti").
+3. Se è stata presa una decisione (anche "lasciare così"), aggiungila a `docs/decisions.md`.
+4. Aggiungi una riga a `CHANGELOG.md` (data + descrizione sintetica).
+5. `git commit` in `/srv/ops` con messaggio chiaro (il diff è il dettaglio, il CHANGELOG il riassunto).
+
+Anche senza modifiche al server: se in sessione emergono fatti nuovi, decisioni o cose rimandate,
+registrali allo stesso modo prima di chiudere.
+
+## Mappa del repository
+
+| Percorso | Contenuto |
+|---|---|
+| `STATUS.md` | Dove siamo rimasti, prossimi passi, **lista unica dei problemi aperti** |
+| `CHANGELOG.md` | Storico sintetico delle modifiche al server |
+| `host.conf` | Parametri della macchina per gli script di `bin/` (nessuna credenziale) |
+| `docs/bootstrap/` | Configurazione iniziale: checklist e avanzamento |
+| `docs/overview.md` | Architettura, dischi, sommario servizi |
+| `docs/network.md` | Porte, UFW, interfacce, netplan, eventuale tunnel |
+| `docs/system.md` | systemd, pacchetti, utenti/SSH/sudo, cron e timer |
+| `docs/storage-backup.md` | Filesystem, Borg, copia remota, prove di ripristino |
+| `docs/security.md` | Rischi di sicurezza noti e posizioni dei segreti (mai i valori) |
+| `docs/services/*.md` | Una scheda per servizio |
+| `docs/decisions.md` | Decisioni prese, con motivazione |
+| `docs/future-improvements.md` | Miglioramenti possibili, non attivi e non bloccanti |
+| `docs/runbooks/` | Procedure operative (controllo rapido, manutenzione, monitoraggio, …) |
+| `bin/quick-check` | Controllo rapido dello stato del server (sola lettura) |
+| `maint/`, `bin/cli-update`, `bin/maint-approve` | Manutenzione automatica: sorgenti, unit, `install-maint`, modelli (`docs/runbooks/manutenzione.md`) |
+
+## Adattatori per agenti specifici
+
+Questo file è l'unica fonte di istruzioni. Adattatori, senza istruzioni proprie:
+- Claude Code: `CLAUDE.md` contiene solo `@AGENTS.md`; `~/CLAUDE.md` nella home contiene solo il rimando
+  `@/srv/ops/AGENTS.md`;
+- Codex: legge `AGENTS.md` direttamente;
+- Gemini CLI: `.gemini/settings.json` imposta `context.fileName` = `AGENTS.md`. Il login personale ("Login with
+  Google") è stato dismesso da Google (2026-09-27); sostituto: Antigravity CLI;
+- Antigravity CLI (`agy`): legge nativamente `AGENTS.md` della cartella di lavoro, nessun adattatore. Non creare
+  `GEMINI.md`, `.agents/rules/` né regole globali in `~/.gemini/` (verrebbero sommate).
+Dalla home, `claude`, `codex`, `gemini` e `agy` sono funzioni di shell (`~/.bash_aliases`) che avviano lo
+strumento in `/srv/ops`; lo strumento iniziale è Claude Code, gli altri sono facoltativi. Non duplicare
+istruzioni negli adattatori né nelle memorie globali degli strumenti.

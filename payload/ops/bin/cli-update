@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# cli-update — aggiornamento controllato dei CLI amministrativi (Claude Code, Codex, Antigravity).
+# Utente amministratore, senza sudo; avviato settimanalmente da ops-cli-update.timer (o a mano).
+# Solo gli strumenti installati: quelli assenti vengono saltati.
+#   cli-update            aggiorna (un programma alla volta)
+#   cli-update --verify   nessun aggiornamento: verifica permessi e caricamento di AGENTS.md degli strumenti
+#                         installati (prerequisito di install-maint enable cli-update)
+# Un programma alla volta: se è in uso non si tocca; dopo l'aggiornamento verifica versione, permessi e
+# caricamento di /srv/ops/AGENTS.md; se la verifica fallisce torna alla versione precedente.
+# Documentazione: /srv/ops/docs/runbooks/manutenzione.md
+set -u
+export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+export AGY_CLI_DISABLE_AUTO_UPDATE=true DISABLE_AUTOUPDATER=1
+WORK="$HOME/.local/state/ops/cli-update"; mkdir -p "$WORK"
+LOCK=${MAINT_LOCK:-/run/lock/ops-maint.lock}     # condiviso con la finestra di manutenzione (root)
+MAINT=${MAINT_BIN:-/usr/local/sbin/ops-maint}
+DRY=${DRY_RUN:-0}
+PROMPT="Rispondi solo con ciò che sai già dal contesto iniziale, senza eseguire comandi né leggere file. Da quale file vengono le istruzioni di progetto che hai ricevuto all'avvio? Qual è la sequenza obbligatoria per gli interventi importanti?"
+
+log() { local m; m="$(date -u '+%F %T') cli-update: $*"; echo "$m"; echo "$m" >> "$WORK/cli-update.log"; }
+newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$2" ]; }  # $2 > $1
+
+installed() {  # $1 = strumento
+  case $1 in
+    claude|codex) command -v "$1" >/dev/null ;;
+    agy) [ -x "$HOME/.local/bin/agy" ] ;;
+  esac
+}
+
+take_lock() {  # stesso blocco della finestra: mai durante manutenzione, installazioni o riavvii (e viceversa)
+  exec 9<"$LOCK" || { log "RINVIO: blocco $LOCK assente (manutenzione non installata)"; exit 0; }
+  flock -w 30 9 || { log "RINVIO: manutenzione o altro aggiornamento in corso"; exit 0; }
+  [ -x "$MAINT" ] || { log "RINVIO: $MAINT assente"; exit 0; }
+}
+
+smoke() {  # $1 = strumento; verifica che AGENTS.md sia caricato all'avvio
+  local out="$WORK/smoke-$1.txt"
+  case $1 in
+    claude) (cd /srv/ops && timeout 300 claude -p "$PROMPT") ;;
+    codex)  (cd /srv/ops && timeout 300 codex exec -s read-only --ephemeral --color never "$PROMPT") ;;
+    agy)    (cd /srv/ops && timeout 300 agy --sandbox --print-timeout 240s --print="$PROMPT") ;;
+  esac < /dev/null > "$out" 2>&1
+  grep -q 'AGENTS.md' "$out" && grep -q 'PRECHECK' "$out"
+}
+perms_ok() {  # nessuna modalità globale che salta le approvazioni, nessun autoaggiornamento in background
+  case $1 in
+    claude) ! grep -qE '"(bypassPermissions|dangerously[A-Za-z]*)"' "$HOME/.claude/settings.json" \
+              && grep -q '"DISABLE_AUTOUPDATER": *"1"' "$HOME/.claude/settings.json" ;;
+    codex)  ! grep -qsE 'danger-full-access|approval_policy *= *"never"' "$HOME/.codex/config.toml" ;;
+    agy)    ! grep -qsE '"toolPermission": *"always-proceed"' "$HOME/.gemini/antigravity-cli/settings.json" ;;
+  esac
+}
+in_use() {  # processi reali dello strumento (eseguibile nativo o script avviato da node), di qualunque utente
+  local re
+  case $1 in
+    claude) re='claude|claude-code' ;; codex) re='codex' ;; agy) re='agy|antigravity' ;;
+  esac
+  "$MAINT" procs | grep -qiE "($re)"
+}
+
+update_npm() {  # $1 = comando, $2 = pacchetto npm, $3 = dist-tag di riferimento
+  local cur target
+  cur=$(npm ls -g --depth=0 --json "$2" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["dependencies"][sys.argv[1]]["version"])' "$2" 2>/dev/null)
+  target=$(npm view "$2@$3" version 2>/dev/null)
+  [ -n "$cur" ] && [ -n "$target" ] || { log "$1: versione non determinabile (installata '$cur', $3 '$target')"; return 1; }
+  newer "$cur" "$target" || { log "$1: $cur aggiornato ($3 = $target)"; return 0; }
+  in_use "$1" && { log "$1: $cur -> $target rinviato, programma in uso"; return 0; }
+  [ "$DRY" = 1 ] && { log "$1: DRY_RUN, aggiornerei $cur -> $target"; return 0; }
+  log "$1: aggiorno $cur -> $target"
+  if npm install -g --no-fund --no-audit "$2@$target" >> "$WORK/npm.log" 2>&1 && perms_ok "$1" && smoke "$1"; then
+    log "$1: $target verificato (AGENTS.md caricato, permessi invariati)"
+  else
+    log "$1: VERIFICA FALLITA su $target, ripristino $cur (dettagli in $WORK)"
+    npm install -g --no-fund --no-audit "$2@$cur" >> "$WORK/npm.log" 2>&1 && log "$1: ripristinato $cur" \
+      || log "$1: ERRORE, ripristino di $cur fallito"
+    return 1
+  fi
+}
+
+update_agy() {
+  local bin="$HOME/.local/bin/agy" cur new
+  cur=$("$bin" --version 2>/dev/null | head -1)
+  in_use agy && { log "agy: aggiornamento rinviato, programma in uso"; return 0; }
+  [ "$DRY" = 1 ] && { log "agy: DRY_RUN, eseguirei 'agy update' (installata $cur)"; return 0; }
+  cp -p "$bin" "$WORK/agy.prev"
+  "$bin" update >> "$WORK/agy-update.log" 2>&1
+  new=$("$bin" --version 2>/dev/null | head -1)
+  if [ "$new" = "$cur" ]; then log "agy: $cur aggiornato"; rm -f "$WORK/agy.prev"; return 0; fi
+  if perms_ok agy && smoke agy; then
+    log "agy: $cur -> $new verificato (AGENTS.md caricato, permessi invariati)"; rm -f "$WORK/agy.prev"
+  else
+    log "agy: VERIFICA FALLITA su $new, ripristino $cur"
+    cp -p "$WORK/agy.prev" "$bin.new" && mv "$bin.new" "$bin" && log "agy: ripristinato $cur"
+    return 1
+  fi
+}
+
+rc=0
+if [ "${1:-}" = "--verify" ]; then
+  n=0
+  for t in claude codex agy; do
+    installed "$t" || continue
+    n=$((n + 1))
+    if perms_ok "$t" && smoke "$t"; then log "$t: verifica OK (AGENTS.md caricato, permessi conformi)"
+    else log "$t: VERIFICA FALLITA (dettagli in $WORK/smoke-$t.txt)"; rc=1; fi
+  done
+  [ "$n" -gt 0 ] || { log "nessun CLI installato"; rc=1; }
+  exit $rc
+fi
+take_lock
+installed claude && { update_npm claude @anthropic-ai/claude-code stable || rc=1; }   # canale stable (circa una settimana di ritardo)
+installed codex  && { update_npm codex  @openai/codex latest || rc=1; }               # Codex pubblica le release stabili su latest
+installed agy    && { update_agy || rc=1; }
+exit $rc

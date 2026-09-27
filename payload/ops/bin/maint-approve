@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# maint-approve — un agente approva aggiornamenti da installare nella prossima finestra di manutenzione.
+# Uso: bin/maint-approve PACCHETTO...     (solo pacchetti già installati; si fissa la versione candidata)
+#      bin/maint-approve --show           (mostra l'elenco approvato)
+# Da usare DOPO la valutazione (origine, changelog, simulazione, servizi riavviati). Nessun sudo.
+# La finestra installa esattamente pacchetto=versione e rivalida tutto; se il candidato cambia, rinvia.
+set -euo pipefail
+LIST=${MAINT_INBOX:-/var/lib/ops-maint/inbox}/approved-upgrades
+[ "${1:-}" = "--show" ] && { cat "$LIST" 2>/dev/null || echo "(nessun aggiornamento approvato)"; exit 0; }
+[ $# -gt 0 ] || { sed -n '2,6p' "$0"; exit 2; }
+ORIGINS_RE=$(/usr/local/sbin/ops-maint origins) || { echo "manutenzione non installata (install-maint install)" >&2; exit 1; }
+lines=()
+for p in "$@"; do
+  [[ "$p" =~ ^[a-z0-9][a-z0-9.+-]{0,99}$ ]] || { echo "nome di pacchetto non valido: $p" >&2; exit 1; }
+  st=$(dpkg-query -W -f='${db:Status-Abbrev}' "$p" 2>/dev/null || true)
+  [ "${st:0:2}" = "ii" ] || { echo "$p: non installato" >&2; exit 1; }
+  inst=$(dpkg-query -W -f='${Version}' "$p")
+  cand=$(apt-cache policy "$p" | awk '/Candidate:/ {print $2}')
+  [ "$cand" != "$inst" ] || { echo "$p: già alla versione candidata $cand" >&2; exit 1; }
+  lines+=("$p=$cand")
+done
+sim=$(apt-get -s install --only-upgrade "${lines[@]}")
+grep -E '^(Inst|Remv)|upgraded,' <<< "$sim"
+grep -q '^Remv' <<< "$sim" && { echo "la simulazione rimuove pacchetti: non approvato" >&2; exit 1; }
+bad=$(grep '^Inst' <<< "$sim" | grep -vE "\(\S+ $ORIGINS_RE" || true)
+[ -z "$bad" ] || { echo "origine non ammessa: $bad" >&2; exit 1; }
+{ echo "# approvati il $(date -u '+%F %T') UTC"; printf '%s\n' "${lines[@]}"; } >> "$LIST"
+echo "Approvati ${#lines[@]} pacchetti in $LIST"

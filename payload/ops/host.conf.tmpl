@@ -1,0 +1,19 @@
+# /srv/ops/host.conf — parametri della macchina per gli script di /srv/ops/bin (utente amministratore).
+# Letto da quick-check, heartbeat, healthchecks, cli-update. Nessuna credenziale qui dentro.
+# Si compila durante la configurazione iniziale (docs/bootstrap/configurazione-server-base.md) e si
+# aggiorna, con commit, ogni volta che cambia ciò che la macchina deve controllare.
+HOST=@@HOST@@
+ADMIN=@@ADMIN@@
+LAN_CIDR=""                 # rete locale ammessa da UFW, es. 192.168.1.0/24 (sezione 0)
+MOUNTS="/"                  # punti di montaggio controllati (sezione 2: aggiungere /srv e il disco dati)
+SERVICES="ssh cron"         # unit che devono essere attive (sezione 7: ufw fail2ban; sezione 8: docker)
+CONTAINERS=""               # container attesi, separati da spazi (sezione 8)
+TUNNEL_READY_URL=""         # solo con tunnel in uscita, es. http://127.0.0.1:20241/ready (cloudflared)
+BORG_REPO=""                # repository Borg locale; vuoto = backup non ancora configurato (sezione 10)
+BORG_LOG=/var/log/borgmatic.log
+SQLITE_SNAPSHOTS=0          # database negli snapshot SQLite prima del backup (0 = nessuno)
+SNAPSHOT_DIR=""             # cartella degli snapshot (solo per il messaggio di errore)
+OFFSITE=""                  # destinazione della copia remota, solo descrittiva (sezione 10.3)
+OFFSITE_LOG=/var/log/offsite-sync.log
+OFFSITE_CRON_MATCH="rclone sync"
+MONITOR_CFG="$HOME/.config/ops"   # URL di ping e chiave Healthchecks (0600), mai nel repository
