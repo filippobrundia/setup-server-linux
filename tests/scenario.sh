@@ -27,6 +27,9 @@ rc=$(run --admin tester --check)
 [ "$rc" = 0 ] && [ ! -e /srv/ops ] && [ ! -e /var/log/ops-bootstrap.log ] && pass "--check non modifica nulla" || { bad "--check (rc=$rc)"; cat /tmp/out.txt; }
 tn "argomento mancante rifiutato" bash "$PKG/bootstrap.sh" --admin root --check
 
+rc=$(run --admin tester --knowledge-base-only --check)
+[ "$rc" = 3 ] && grep -q 'richiede una /srv/ops già preparata' /tmp/out.txt && pass "--knowledge-base-only rifiutato su macchina non preparata" || bad "kb-only senza preparazione (rc=$rc)"
+
 echo "== T3 prima esecuzione"
 rc=$(run --admin tester); cp /tmp/out.txt /tmp/first.txt
 [ "$rc" = 0 ] && pass "bootstrap completato" || { bad "bootstrap (rc=$rc)"; tail -30 /tmp/out.txt; }
@@ -76,6 +79,37 @@ echo "== T8 nuova versione del pacchetto"
 rm -rf /tmp/pkg2; cp -a "$PKG" /tmp/pkg2; echo 'Riga aggiunta nella nuova versione.' >> /tmp/pkg2/payload/ops/docs/runbooks/controllo-rapido.md
 bash /tmp/pkg2/bootstrap.sh --admin tester > /tmp/out.txt 2>&1; rc=$?
 [ "$rc" = 0 ] && grep -q 'update: docs/runbooks/controllo-rapido.md' /tmp/out.txt && pass "aggiorna solo i file non modificati localmente" || { bad "aggiornamento (rc=$rc)"; tail -5 /tmp/out.txt; }
+
+echo "== T12 Knowledge Base ereditata"
+t "indice della knowledge base" test -f /srv/ops/knowledge-base/INDEX.md
+t "pagina Paperclip raggiungibile dall'indice" grep -q 'tecnologie/paperclip/README.md' /srv/ops/knowledge-base/INDEX.md
+t "regola KNOWLEDGE FIRST in AGENTS.md" grep -q 'KNOWLEDGE FIRST' /srv/ops/AGENTS.md
+t "regola LEARN & CONSOLIDATE in AGENTS.md" grep -q 'LEARN & CONSOLIDATE' /srv/ops/AGENTS.md
+nl=0; for f in $(find /srv/ops/knowledge-base -name '*.md'); do d=$(dirname $f); for l in $(grep -oE '\]\([^)#]+' $f | sed 's/](//' | grep -v '^http'); do [ -e "$d/$l" ] || nl=$((nl+1)); done; done
+[ "$nl" = 0 ] && pass "collegamenti della knowledge base risolti sul server nuovo" || bad "collegamenti non risolti: $nl"
+t "impronte degli artefatti di riferimento" bash -c "cd /srv/ops/knowledge-base/tecnologie/paperclip/riferimento && sha256sum -c --quiet SHA256SUMS"
+# aggiornamento della sola knowledge base: pagina nuova, pagina invariata aggiornata, pagina arricchita localmente conservata
+rm -rf /tmp/pkg3; cp -a "$PKG" /tmp/pkg3
+printf '# Pagina nuova\n' > /tmp/pkg3/payload/ops/knowledge-base/trasversali/pagina-nuova.md
+echo 'Aggiornamento del pacchetto.' >> /tmp/pkg3/payload/ops/knowledge-base/trasversali/ssh-processi-orfani.md
+echo 'Aggiornamento del pacchetto.' >> /tmp/pkg3/payload/ops/knowledge-base/trasversali/segreti-nei-container.md
+echo '# modifica che NON deve essere applicata in modalità knowledge base' >> /tmp/pkg3/payload/ops/bin/quick-check
+echo 'Nota locale verificata.' >> /srv/ops/knowledge-base/trasversali/segreti-nei-container.md
+runuser -u tester -- git -C /srv/ops commit -qam "arricchimento locale"
+QC=$(sha256sum /srv/ops/bin/quick-check); NC=$(runuser -u tester -- git -C /srv/ops rev-list --count HEAD); MF=$(wc -l < /srv/ops/.bootstrap/manifest)
+bash /tmp/pkg3/bootstrap.sh --admin tester --knowledge-base-only > /tmp/out.txt 2>&1; rc=$?
+[ "$rc" = 0 ] && pass "--knowledge-base-only completato" || { bad "kb-only (rc=$rc)"; tail -5 /tmp/out.txt; }
+t "pagina nuova creata" test -f /srv/ops/knowledge-base/trasversali/pagina-nuova.md
+t "pagina invariata aggiornata" grep -q 'Aggiornamento del pacchetto.' /srv/ops/knowledge-base/trasversali/ssh-processi-orfani.md
+t "pagina arricchita localmente conservata" grep -q 'Nota locale verificata.' /srv/ops/knowledge-base/trasversali/segreti-nei-container.md
+t "conservazione segnalata" grep -q 'conservato (modificato localmente): knowledge-base/trasversali/segreti-nei-container.md' /tmp/out.txt
+t "nessuna modifica operativa (quick-check invariato)" bash -c "[ \"\$(sha256sum /srv/ops/bin/quick-check)\" = \"$QC\" ]"
+tn "nessun passo operativo eseguito" grep -qE '== (1|3|4|5)/5' /tmp/out.txt
+t "commit dell'aggiornamento" bash -c "[ \$(runuser -u tester -- git -C /srv/ops rev-list --count HEAD) -gt $NC ] && [ -z \"\$(runuser -u tester -- git -C /srv/ops status --porcelain)\" ]"
+t "manifest unito (voci non toccate conservate)" bash -c "[ \$(wc -l < /srv/ops/.bootstrap/manifest) -ge $MF ]"
+rc=$(bash /tmp/pkg3/bootstrap.sh --admin tester --check > /tmp/out.txt 2>&1; echo $?)
+[ "$rc" = 0 ] && grep -q 'aggiorna /srv/ops/bin/quick-check' /tmp/out.txt && grep -q 'conserva /srv/ops/knowledge-base/trasversali/segreti-nei-container.md' /tmp/out.txt \
+  && pass "esecuzione completa (--check): aggiornamenti operativi solo lì, pagina locale della KB conservata" || { bad "esecuzione completa dopo kb-only (rc=$rc)"; grep -E 'CONFLITTO|STOP' /tmp/out.txt | head -3; }
 
 echo "== T9 conflitti nella home e nei parametri"
 useradd -m -s /bin/bash -G sudo tester2; echo 'alias claude=true' >> ~tester2/.bash_aliases

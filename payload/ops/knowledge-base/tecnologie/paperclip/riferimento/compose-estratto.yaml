@@ -1,0 +1,43 @@
+# Estratto di riferimento (collaudato 2026-09) dei servizi e delle reti per agenti isolati. Adattare nomi, percorsi
+# e limiti al progetto. Paperclip e il suo database restano come nel Compose del progetto; qui solo cosa cambia.
+services:
+  paperclip:
+    # ... immagine ufficiale fissata per digest, user 1000:1000, cap_drop ALL, no-new-privileges, 127.0.0.1:3100,
+    # segreti come file esportati dall'entrypoint (DATABASE_URL, BETTER_AUTH_SECRET,
+    # PAPERCLIP_TOOL_ACTION_SIGNING_SECRET, PAPERCLIP_AGENT_JWT_SECRET) ...
+    networks: [frontend, backend, runner]
+  runner:
+    image: <progetto>/runner:codex-0.155.1-<n>
+    build: { context: ./images/runner, args: { CODEX_VERSION: "0.155.1" } }
+    restart: unless-stopped
+    environment:
+      AUTHORIZED_KEY: "${RUNNER_AUTHORIZED_KEY:?chiave pubblica di Paperclip}"
+      RUNNER_JANITOR_GRACE: "90"
+    read_only: true
+    tmpfs:
+      - /work:uid=1001,gid=1001,mode=0700,size=1g
+      - /tmp:uid=1001,gid=1001,mode=0700,size=256m
+      - /home/agent:uid=1001,gid=1001,mode=0700,size=256m
+    volumes:
+      - runner-ssh:/var/lib/runner-ssh:ro          # chiave host generata una volta con un container usa e getta
+      - <documentazione per l'agente>:/<percorso>:ro # solo documenti non riservati, in sola lettura
+    networks: [runner, egress-int]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    deploy: { resources: { limits: { memory: 2g, cpus: "1.5", pids: 512 } } }
+  egress-proxy:
+    image: <progetto>/egress-proxy:1
+    build: { context: ./images/egress-proxy }
+    restart: unless-stopped
+    environment: { EGRESS_ALLOW_HOSTS: "api.openai.com,chatgpt.com,auth.openai.com" }
+    read_only: true
+    networks: [egress-int, egress]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    deploy: { resources: { limits: { memory: 128m, cpus: "0.25", pids: 64 } } }
+volumes:
+  runner-ssh:
+networks:
+  runner:     { internal: true }   # solo SSH da Paperclip al runner
+  egress-int: { internal: true }   # dal runner al proxy
+  egress:     {}                   # uscita del solo proxy

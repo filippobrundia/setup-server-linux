@@ -15,23 +15,48 @@ Sulla macchina nuova, come **utente amministratore normale** creato dall'install
 non root), con l'impronta SHA-256 riportata nella pagina della release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.1.0/install.sh \
+curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.2.0/install.sh \
   | bash -s -- --sha256 <IMPRONTA> --check   # solo controllo: piano e conflitti, nessuna modifica
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.1.0/install.sh \
+curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.2.0/install.sh \
   | bash -s -- --sha256 <IMPRONTA>           # esecuzione (ripetibile)
 ```
 
-`install.sh` rifiuta root, scarica l'archivio della release `v0.1.0`, lo confronta con `SHA256SUMS` della release e
-con l'impronta passata a `--sha256`, lo estrae in `~/setup-server-linux-0.1.0` e avvia
+`install.sh` rifiuta root, scarica l'archivio della release `v0.2.0`, lo confronta con `SHA256SUMS` della release e
+con l'impronta passata a `--sha256`, lo estrae in `~/setup-server-linux-0.2.0` e avvia
 `sudo bootstrap.sh --admin <utente>` (sudo chiede la password). Claude Code e il suo login restano nell'account
 dell'amministratore. Opzione: `--owner "Nome"` (nome del proprietario usato nelle regole; di default il primo nome
 del campo GECOS).
 
-Alternativa manuale: scaricare `setup-server-linux-0.1.0.tar.gz` e `SHA256SUMS` dalla release,
+Alternativa manuale: scaricare `setup-server-linux-0.2.0.tar.gz` e `SHA256SUMS` dalla release,
 `sha256sum -c SHA256SUMS`, estrarre e lanciare `sudo ./bootstrap.sh --admin "$USER" [--check]`.
 
 Poi, in un **nuovo** terminale: `claude` → completare il login personale. L'agente parte in `/srv/ops`, trova
 `docs/bootstrap/avanzamento.md` con `STATO: IN CORSO` e prosegue con la checklist secondo `AGENTS.md`.
+
+## Knowledge Base tecnica ereditata
+
+Il pacchetto distribuisce in `/srv/ops/knowledge-base/` la conoscenza tecnica **verificata e trasferibile** del
+server di origine (indice: `knowledge-base/INDEX.md`): configurazioni collaudate, problemi con cause accertate,
+esperimenti anche falliti, versioni di applicabilità, test riutilizzabili e rischi aperti. Primo argomento: Paperclip
+con agenti Codex isolati in un runner SSH (sandbox, proxy di uscita, reti, credenziali temporanee, pulizia,
+persistenza). `AGENTS.md` impone agli amministratori **KNOWLEDGE FIRST** (consultarla prima di intervenire) e
+**LEARN & CONSOLIDATE** (arricchirla dopo ogni conoscenza verificata).
+
+Aggiornare **solo** la Knowledge Base da una release più recente, senza effetti operativi (niente pacchetti, agente,
+home o manutenzione; le pagine arricchite localmente vengono conservate e segnalate):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/<versione>/install.sh \
+  | bash -s -- --sha256 <IMPRONTA> --knowledge-base-only
+```
+
+Il pacchetto ricrea la **foundation e la sua conoscenza**, non le applicazioni: nessuna installazione automatica di
+Paperclip o di altri servizi. La Knowledge Base descrive come installarli; i dati, i segreti e la configurazione di
+una specifica installazione (per ripristinare la stessa istanza) restano nei backup e nei repository del relativo
+progetto e non fanno parte di questo pacchetto.
+
+Sul server di origine la fonte è `/srv/ops/knowledge-base`; `tools/sync-knowledge-base.sh` la copia nel payload
+controllando credenziali, collegamenti e (con `PRIVATE_PATTERNS`) stringhe riservate del server.
 
 ## Requisito Node.js
 
@@ -64,6 +89,8 @@ identici si saltano, quelli del pacchetto non modificati si aggiornano, quelli c
 | `payload/ops/` | ciò che diventa `/srv/ops` (`*.tmpl` completati con hostname, utente, proprietario, data) |
 | `payload/ops/maint/` | `ops-maint` (script root della finestra), unit `ops-*`, `install-maint`, modelli di backup/cron/Docker |
 | `payload/home/` | adattatori per la home dell'amministratore |
+| `payload/ops/knowledge-base/` | Knowledge Base tecnica (copia verificata della fonte del server di origine) |
+| `tools/sync-knowledge-base.sh` | sincronizzazione della Knowledge Base dal server di origine, con controlli di pubblicabilità |
 | `tests/` | collaudo in container (`run-container-test.sh`, `scenario.sh`) |
 
 Differenze rispetto al server di origine (solo parametrizzazione): nomi fissi `ops-*` al posto di `servern100-*`,
@@ -75,11 +102,12 @@ verificato: va estratto con sudo, riletto e parametrizzato prima di includerlo).
 
 ## Collaudo
 
-**Fatto — solo in container.** `tests/run-container-test.sh` (Docker, immagine `ubuntu:24.04` usa e getta, senza
-systemd): **52/52 prove superate** il 2026-09-27 su protezioni, `--check`, prima esecuzione, contenuto, idempotenza,
-conflitti, aggiornamento del pacchetto, adattatori, script e shellcheck. Dopo quella esecuzione sono cambiati solo
-testi, il nome del progetto e un controllo del test (lo scenario ora conta 51 prove); `install.sh` è stato aggiunto
-dopo e **non è stato eseguito** in container.
+**Fatto — solo in container.** `tests/run-container-test.sh` (Docker, `ubuntu:24.04` usa e getta, senza systemd):
+**68/68 prove superate** con la versione 0.2.0: protezioni, `--check`, prima esecuzione, contenuto, idempotenza,
+conflitti, aggiornamento del pacchetto, adattatori, script, shellcheck e **Knowledge Base** (indice, regole in
+`AGENTS.md`, collegamenti risolti, impronte degli artefatti, `--knowledge-base-only`: pagine nuove create, invariate
+aggiornate, arricchite localmente conservate, nessun passo operativo, commit). `install.sh` non è stato eseguito
+in container.
 
 **Da provare su una VM o macchina Ubuntu Server pulita, con systemd, prima dell'uso in produzione:**
 1. `bootstrap.sh` su Ubuntu Server reale (pacchetti di `ubuntu-server` già presenti, `unattended-upgrades` attivo

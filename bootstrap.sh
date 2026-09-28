@@ -2,6 +2,9 @@
 # bootstrap.sh — prepara un Ubuntu Server appena installato per l'amministrazione con agenti.
 #
 #   sudo ./bootstrap.sh --admin UTENTE [--owner "Nome"] [--check]
+#   sudo ./bootstrap.sh --admin UTENTE --knowledge-base-only [--check]
+#       aggiorna SOLO /srv/ops/knowledge-base (nessun pacchetto, agente, home o manutenzione): le pagine modificate
+#       localmente vengono conservate e segnalate, quelle nuove create, quelle invariate aggiornate; commit Git.
 #
 # Fa soltanto questo, ed è ripetibile e riprendibile:
 #   1. pacchetti minimi per l'agente (git, curl, ca-certificates, gnupg, jq) e Node.js 22 da NodeSource
@@ -31,13 +34,14 @@ MARK_BEGIN='# >>> ops: strumenti di amministrazione'
 MARK_END='# <<< ops <<<'
 BASE_PKGS="git curl ca-certificates gnupg jq"
 
-ADMIN=${SUDO_USER:-}; OWNER=""; CHECK=0
+ADMIN=${SUDO_USER:-}; OWNER=""; CHECK=0; KBONLY=0
 while [ $# -gt 0 ]; do
   case $1 in
     --admin) ADMIN=${2:-}; shift 2 ;;
     --owner) OWNER=${2:-}; shift 2 ;;
     --check) CHECK=1; shift ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    --knowledge-base-only) KBONLY=1; shift ;;
+    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
     *) echo "opzione sconosciuta: $1" >&2; exit 2 ;;
   esac
 done
@@ -78,6 +82,9 @@ HOST=$(hostname -s)
 if [ -e "$OPS" ] && [ ! -f "$OPS/.bootstrap/manifest" ]; then
   die "$OPS esiste e non è stato creato da questo pacchetto: nessuna modifica"
 fi
+if [ "$KBONLY" = 1 ] && [ ! -f "$OPS/.bootstrap/manifest" ]; then
+  die "--knowledge-base-only richiede una /srv/ops già preparata da questo pacchetto"
+fi
 
 for f in payload/ops/AGENTS.md.tmpl payload/ops/maint/install-maint payload/ops/maint/ops-maint payload/home/bash_aliases.block; do
   [ -f "$PKG/$f" ] || die "pacchetto incompleto: manca $f"
@@ -113,6 +120,7 @@ while IFS= read -r rel; do
   if [ "$out" != "$rel" ]; then render "$PKG/payload/ops/$rel" "$STAGE/ops/$out"; else cp "$PKG/payload/ops/$rel" "$STAGE/ops/$out"; fi
   echo "$out" >> "$STAGE/out.list"
 done < "$STAGE/src.list"
+if [ "$KBONLY" = 1 ]; then grep '^knowledge-base/' "$STAGE/out.list" > "$STAGE/kb.list" || true; mv "$STAGE/kb.list" "$STAGE/out.list"; fi
 
 # --- Piano per /srv/ops ---
 declare -A OLD=()
@@ -127,9 +135,11 @@ while IFS= read -r rel; do
   elif cmp -s "$STAGE/ops/$rel" "$dst"; then ACTION[$rel]=same
   elif seed_file "$rel"; then ACTION[$rel]=keep
   elif [ -n "${OLD[$rel]:-}" ] && [ "$(sha "$dst")" = "${OLD[$rel]}" ]; then ACTION[$rel]=update; plan "aggiorna $dst (versione precedente del pacchetto, non modificata)"
+  elif [[ "$rel" == knowledge-base/* ]]; then ACTION[$rel]=keeplocal; plan "conserva $dst (arricchita localmente; versione del pacchetto: $PKG/payload/ops/$rel)"
   else conflict "$dst modificato rispetto al pacchetto: confrontare con $PKG/payload/ops/$rel"; fi
 done < "$STAGE/out.list"
 
+if [ "$KBONLY" = 0 ]; then   # --- controlli non necessari per il solo aggiornamento della Knowledge Base ---
 # --- Home dell'amministratore ---
 render "$PKG/payload/home/CLAUDE.md.tmpl" "$STAGE/home-CLAUDE.md"
 if [ -e "$AHOME/CLAUDE.md" ]; then
@@ -199,6 +209,7 @@ for u in ops-maint-window.timer ops-cli-update.timer; do
   if [ -d /run/systemd/system ] && systemctl is-enabled --quiet "$u" 2>/dev/null; then plan "nota: $u è già abilitato (lasciato com'è)"; fi
 done
 
+fi
 # --- Esito del controllo ---
 [ "${#PLAN[@]}" -gt 0 ] && printf '  piano: %s\n' "${PLAN[@]}"
 if [ "${#CONFLICTS[@]}" -gt 0 ]; then
@@ -218,6 +229,7 @@ apt_install() {  # simulazione prima: nessuna rimozione ammessa
 }
 missing_pkgs() { local p; for p in "$@"; do dpkg-query -W -f='${db:Status-Abbrev}' "$p" 2>/dev/null | grep -q '^ii' || echo "$p"; done; }
 
+if [ "$KBONLY" = 0 ]; then
 log "== 1/5 pacchetti di base e Node.js $NODE_MAJOR"
 mapfile -t miss < <(missing_pkgs $BASE_PKGS)
 if [ "${#miss[@]}" -gt 0 ]; then
@@ -241,10 +253,13 @@ nv=$(node --version 2>/dev/null || true); nmaj=${nv#v}; nmaj=${nmaj%%.*}
 [ "${nmaj:-0}" -ge "$NODE_MAJOR" ] 2>/dev/null || die "Node.js $NODE_MAJOR non disponibile dopo l'installazione (trovato: ${nv:-nessuno})"
 log "  node $nv"
 
-log "== 2/5 /srv/ops"
+fi
+
+log "== 2/5 /srv/ops$([ "$KBONLY" = 1 ] && echo ' (solo knowledge-base)')"
 install -d -o "$ADMIN" -g "$ADMIN" -m 0775 "$OPS"
 while IFS= read -r rel; do
   case ${ACTION[$rel]} in
+    keeplocal) log "  conservato (modificato localmente): $rel" ;;
     create|update)
       mode=0644; case $rel in bin/*|maint/ops-maint|maint/install-maint) mode=0755 ;; esac
       install -d -o "$ADMIN" -g "$ADMIN" -m 0775 "$OPS/$(dirname "$rel")"
@@ -254,9 +269,16 @@ while IFS= read -r rel; do
 done < "$STAGE/out.list"
 install -d -o "$ADMIN" -g "$ADMIN" -m 0775 "$OPS/.bootstrap"
 # Impronte dei file distribuiti: servono a riconoscere, al prossimo avvio, i file modificati localmente.
-while IFS= read -r rel; do echo "$(sha "$STAGE/ops/$rel")  $rel"; done < "$STAGE/out.list" > "$STAGE/manifest"
+# Manifest unito: le voci dei file non trattati restano; per i file conservati resta l'impronta installata.
+{ while IFS= read -r rel; do
+    if [ "${ACTION[$rel]}" = keeplocal ]; then [ -n "${OLD[$rel]:-}" ] && echo "${OLD[$rel]}  $rel"
+    else echo "$(sha "$STAGE/ops/$rel")  $rel"; fi
+  done < "$STAGE/out.list"
+  if [ "$KBONLY" = 1 ]; then for k in "${!OLD[@]}"; do grep -qxF "$k" "$STAGE/out.list" || echo "${OLD[$k]}  $k"; done; fi
+} | sort -k2 > "$STAGE/manifest"
 install -o "$ADMIN" -g "$ADMIN" -m 0644 "$STAGE/manifest" "$OPS/.bootstrap/manifest"
-echo "$PKG_VERSION" > "$STAGE/version"; install -o "$ADMIN" -g "$ADMIN" -m 0644 "$STAGE/version" "$OPS/.bootstrap/version"
+if [ "$KBONLY" = 1 ]; then echo "$PKG_VERSION" > "$STAGE/kbversion"; install -o "$ADMIN" -g "$ADMIN" -m 0644 "$STAGE/kbversion" "$OPS/.bootstrap/knowledge-base-version"
+else echo "$PKG_VERSION" > "$STAGE/version"; install -o "$ADMIN" -g "$ADMIN" -m 0644 "$STAGE/version" "$OPS/.bootstrap/version"; fi
 if [ ! -d "$OPS/.git" ]; then as_admin git -C "$OPS" init -q -b main; log "  repository Git creato"; fi
 if ! as_admin git config --global user.email >/dev/null 2>&1 && ! as_admin git -C "$OPS" config user.email >/dev/null 2>&1; then
   as_admin git -C "$OPS" config user.name "$OWNER"; as_admin git -C "$OPS" config user.email "$ADMIN@$HOST"
@@ -264,7 +286,15 @@ if ! as_admin git config --global user.email >/dev/null 2>&1 && ! as_admin git -
 fi
 as_admin git -C "$OPS" add -A
 if as_admin git -C "$OPS" diff --cached --quiet; then log "  nessuna modifica da registrare in Git"
-else as_admin git -C "$OPS" commit -q -m "bootstrap: pacchetto setup-server-linux $PKG_VERSION distribuito"; log "  commit: $(as_admin git -C "$OPS" log --oneline -1)"; fi
+else as_admin git -C "$OPS" commit -q -m "bootstrap: $([ "$KBONLY" = 1 ] && echo 'knowledge base aggiornata da' || echo 'pacchetto') setup-server-linux $PKG_VERSION"; log "  commit: $(as_admin git -C "$OPS" log --oneline -1)"; fi
+
+if [ "$KBONLY" = 1 ]; then
+  log "== VERIFY"
+  [ -z "$(as_admin git -C "$OPS" status --porcelain)" ] && log "  /srv/ops: repository pulito" || die "/srv/ops: modifiche non registrate"
+  [ -f "$OPS/knowledge-base/INDEX.md" ] && log "  knowledge base: $(find "$OPS/knowledge-base" -type f | wc -l) file, indice presente" || die "indice della knowledge base assente"
+  log "Fatto: solo la knowledge base è stata aggiornata; nessuna modifica operativa."
+  exit 0
+fi
 
 log "== 3/5 Claude Code per $ADMIN"
 if [ ! -f "$NPMRC" ] || ! grep -q '^prefix=' "$NPMRC"; then

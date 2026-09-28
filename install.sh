@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # install.sh — punto di ingresso pubblico di setup-server-linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.1.0/install.sh \
-#     | bash -s -- --sha256 <IMPRONTA DALLA PAGINA DELLA RELEASE> [--check] [--owner "Nome"]
+#   curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.2.0/install.sh \
+#     | bash -s -- --sha256 <IMPRONTA DALLA PAGINA DELLA RELEASE> [--check] [--owner "Nome"] [--knowledge-base-only]
 #
 # Da eseguire come utente amministratore NORMALE (nel gruppo sudo), mai come root: Claude Code e il suo login
 # restano in questo account. Scarica la release v$VERSION, ne verifica l'integrità (SHA256SUMS della release e,
@@ -10,7 +10,7 @@
 # "sudo bootstrap.sh --admin <questo utente>" (sudo chiede la password). --check: solo controllo, nessuna modifica.
 set -euo pipefail
 REPO=filippobrundia/setup-server-linux
-VERSION=0.1.0
+VERSION=0.2.0
 NAME=setup-server-linux-$VERSION
 BASE=https://github.com/$REPO/releases/download/v$VERSION
 
@@ -21,6 +21,7 @@ while [ $# -gt 0 ]; do
     --sha256) WANT=${2:-}; shift 2 ;;
     --check)  ARGS+=(--check); shift ;;
     --owner)  ARGS+=(--owner "${2:-}"); shift 2 ;;
+    --knowledge-base-only) ARGS+=(--knowledge-base-only); shift ;;
     *) die "opzione sconosciuta: $1" ;;
   esac
 done
