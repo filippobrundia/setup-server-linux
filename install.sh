@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh — punto di ingresso pubblico di setup-server-linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.2.0/install.sh \
+#   curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.3.0/install.sh \
 #     | bash -s -- --sha256 <IMPRONTA DALLA PAGINA DELLA RELEASE> [--check] [--owner "Nome"] [--knowledge-base-only]
 #
 # Da eseguire come utente amministratore NORMALE (nel gruppo sudo), mai come root: Claude Code e il suo login
@@ -10,7 +10,7 @@
 # "sudo bootstrap.sh --admin <questo utente>" (sudo chiede la password). --check: solo controllo, nessuna modifica.
 set -euo pipefail
 REPO=filippobrundia/setup-server-linux
-VERSION=0.2.0
+VERSION=0.3.0
 NAME=setup-server-linux-$VERSION
 BASE=https://github.com/$REPO/releases/download/v$VERSION
 

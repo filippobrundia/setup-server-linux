@@ -3,8 +3,11 @@
 #
 #   sudo ./bootstrap.sh --admin UTENTE [--owner "Nome"] [--check]
 #   sudo ./bootstrap.sh --admin UTENTE --knowledge-base-only [--check]
-#       aggiorna SOLO /srv/ops/knowledge-base (nessun pacchetto, agente, home o manutenzione): le pagine modificate
-#       localmente vengono conservate e segnalate, quelle nuove create, quelle invariate aggiornate; commit Git.
+#       aggiorna SOLO la Knowledge Base condivisa: strumento /srv/ops/bin/kb, kb.conf, deploy key, copia locale
+#       (kb init / kb sync). Nessun pacchetto, agente, home o manutenzione; nessuna modifica operativa.
+#   Opzioni della Knowledge Base: --kb-remote URL (predefinito il repository condiviso su GitHub), --kb-id NOME
+#   (nome tecnico e non sensibile del server nei record; predefinito l'hostname).
+#   Esito 4: tutto il resto completato, ma la Knowledge Base NON è stata recuperata (rete o autorizzazione).
 #
 # Fa soltanto questo, ed è ripetibile e riprendibile:
 #   1. pacchetti minimi per l'agente (git, curl, ca-certificates, gnupg, jq) e Node.js 22 da NodeSource
@@ -32,16 +35,20 @@ NS_SOURCES=/etc/apt/sources.list.d/nodesource.sources
 NS_PIN=/etc/apt/preferences.d/nodejs
 MARK_BEGIN='# >>> ops: strumenti di amministrazione'
 MARK_END='# <<< ops <<<'
-BASE_PKGS="git curl ca-certificates gnupg jq"
+BASE_PKGS="git curl ca-certificates gnupg jq openssh-client"
+KB_REMOTE_DEFAULT=git@github.com:filippobrundia/server-knowledge-base.git
+GITHUB_ED25519_FPR=SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU   # pubblicata da GitHub (api.github.com/meta)
 
-ADMIN=${SUDO_USER:-}; OWNER=""; CHECK=0; KBONLY=0
+ADMIN=${SUDO_USER:-}; OWNER=""; CHECK=0; KBONLY=0; KB_REMOTE=$KB_REMOTE_DEFAULT; KB_ID=""
 while [ $# -gt 0 ]; do
   case $1 in
     --admin) ADMIN=${2:-}; shift 2 ;;
     --owner) OWNER=${2:-}; shift 2 ;;
     --check) CHECK=1; shift ;;
     --knowledge-base-only) KBONLY=1; shift ;;
-    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+    --kb-remote) KB_REMOTE=${2:-}; shift 2 ;;
+    --kb-id) KB_ID=${2:-}; shift 2 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "opzione sconosciuta: $1" >&2; exit 2 ;;
   esac
 done
@@ -75,6 +82,9 @@ if [ -z "$OWNER" ]; then OWNER=$(getent passwd "$ADMIN" | cut -d: -f5 | cut -d, 
 [ -n "$OWNER" ] || OWNER=$ADMIN
 [[ "$OWNER" =~ ^[[:alpha:]][[:alnum:]\ \'._-]{0,40}$ ]] || die "--owner non valido: usare lettere, cifre e spazi"
 HOST=$(hostname -s)
+[ -n "$KB_ID" ] || KB_ID=$HOST
+[[ "$KB_ID" =~ ^[a-z0-9][a-z0-9-]{0,23}$ ]] || die "--kb-id non valido ($KB_ID): minuscole, cifre e trattini, massimo 24"
+[[ "$KB_REMOTE" =~ ^[A-Za-z0-9@:/._~+-]+$ ]] || die "--kb-remote non valido"
 [[ "$HOST" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || die "hostname non valido ($HOST): impostarlo prima con hostnamectl"
 
 # Mai sul server di origine o su una /srv/ops che non è nostra.
@@ -100,13 +110,14 @@ render() {  # $1 sorgente → $2 destinazione
   local s; s=$(cat "$1")
   s=${s//@@HOST@@/$HOST}; s=${s//@@ADMIN@@/$ADMIN}; s=${s//@@OWNER@@/$OWNER}
   s=${s//@@DATE@@/$TODAY}; s=${s//@@PKG_VERSION@@/$PKG_VERSION}
+  s=${s//@@KB_REMOTE@@/$KB_REMOTE}; s=${s//@@KB_SERVER_ID@@/$KB_ID}; s=${s//@@AHOME@@/$AHOME}
   printf '%s\n' "$s" > "$2"
 }
 seed_file() {  # file che l'agente compila e aggiorna: creati una volta, mai sovrascritti
   case $1 in
     AGENTS.md|STATUS.md|CHANGELOG.md|host.conf|docs/bootstrap/avanzamento.md) return 0 ;;
     docs/overview.md|docs/system.md|docs/network.md|docs/storage-backup.md|docs/security.md) return 0 ;;
-    docs/decisions.md|docs/future-improvements.md) return 0 ;;
+    docs/decisions.md|docs/future-improvements.md|kb.conf) return 0 ;;
   esac
   return 1
 }
@@ -120,7 +131,7 @@ while IFS= read -r rel; do
   if [ "$out" != "$rel" ]; then render "$PKG/payload/ops/$rel" "$STAGE/ops/$out"; else cp "$PKG/payload/ops/$rel" "$STAGE/ops/$out"; fi
   echo "$out" >> "$STAGE/out.list"
 done < "$STAGE/src.list"
-if [ "$KBONLY" = 1 ]; then grep '^knowledge-base/' "$STAGE/out.list" > "$STAGE/kb.list" || true; mv "$STAGE/kb.list" "$STAGE/out.list"; fi
+if [ "$KBONLY" = 1 ]; then grep -xE 'bin/kb|kb\.conf|\.gitignore' "$STAGE/out.list" > "$STAGE/kb.list" || true; mv "$STAGE/kb.list" "$STAGE/out.list"; fi
 
 # --- Piano per /srv/ops ---
 declare -A OLD=()
@@ -135,7 +146,6 @@ while IFS= read -r rel; do
   elif cmp -s "$STAGE/ops/$rel" "$dst"; then ACTION[$rel]=same
   elif seed_file "$rel"; then ACTION[$rel]=keep
   elif [ -n "${OLD[$rel]:-}" ] && [ "$(sha "$dst")" = "${OLD[$rel]}" ]; then ACTION[$rel]=update; plan "aggiorna $dst (versione precedente del pacchetto, non modificata)"
-  elif [[ "$rel" == knowledge-base/* ]]; then ACTION[$rel]=keeplocal; plan "conserva $dst (arricchita localmente; versione del pacchetto: $PKG/payload/ops/$rel)"
   else conflict "$dst modificato rispetto al pacchetto: confrontare con $PKG/payload/ops/$rel"; fi
 done < "$STAGE/out.list"
 
@@ -255,11 +265,10 @@ log "  node $nv"
 
 fi
 
-log "== 2/5 /srv/ops$([ "$KBONLY" = 1 ] && echo ' (solo knowledge-base)')"
+log "== 2/5 /srv/ops$([ "$KBONLY" = 1 ] && echo ' (solo strumento e configurazione della knowledge base)')"
 install -d -o "$ADMIN" -g "$ADMIN" -m 0775 "$OPS"
 while IFS= read -r rel; do
   case ${ACTION[$rel]} in
-    keeplocal) log "  conservato (modificato localmente): $rel" ;;
     create|update)
       mode=0644; case $rel in bin/*|maint/ops-maint|maint/install-maint) mode=0755 ;; esac
       install -d -o "$ADMIN" -g "$ADMIN" -m 0775 "$OPS/$(dirname "$rel")"
@@ -271,14 +280,45 @@ install -d -o "$ADMIN" -g "$ADMIN" -m 0775 "$OPS/.bootstrap"
 # Impronte dei file distribuiti: servono a riconoscere, al prossimo avvio, i file modificati localmente.
 # Manifest unito: le voci dei file non trattati restano; per i file conservati resta l'impronta installata.
 { while IFS= read -r rel; do
-    if [ "${ACTION[$rel]}" = keeplocal ]; then [ -n "${OLD[$rel]:-}" ] && echo "${OLD[$rel]}  $rel"
-    else echo "$(sha "$STAGE/ops/$rel")  $rel"; fi
+    echo "$(sha "$STAGE/ops/$rel")  $rel"
   done < "$STAGE/out.list"
-  if [ "$KBONLY" = 1 ]; then for k in "${!OLD[@]}"; do grep -qxF "$k" "$STAGE/out.list" || echo "${OLD[$k]}  $k"; done; fi
+  if [ "$KBONLY" = 1 ]; then for k in "${!OLD[@]}"; do case $k in knowledge-base/*) continue ;; esac; grep -qxF "$k" "$STAGE/out.list" || echo "${OLD[$k]}  $k"; done; fi
 } | sort -k2 > "$STAGE/manifest"
 install -o "$ADMIN" -g "$ADMIN" -m 0644 "$STAGE/manifest" "$OPS/.bootstrap/manifest"
 if [ "$KBONLY" = 1 ]; then echo "$PKG_VERSION" > "$STAGE/kbversion"; install -o "$ADMIN" -g "$ADMIN" -m 0644 "$STAGE/kbversion" "$OPS/.bootstrap/knowledge-base-version"
 else echo "$PKG_VERSION" > "$STAGE/version"; install -o "$ADMIN" -g "$ADMIN" -m 0644 "$STAGE/version" "$OPS/.bootstrap/version"; fi
+# --- Knowledge Base condivisa (repository separato; copia locale non versionata nella foundation) ---
+KB_OK=0
+kb_setup() {
+  log "== Knowledge Base condivisa ($KB_REMOTE, server '$KB_ID')"
+  command -v ssh-keygen >/dev/null || { log "  ssh-keygen assente (openssh-client)"; return 1; }
+  local key="$AHOME/.ssh/kb_deploy" kh="$AHOME/.ssh/known_hosts" rc
+  as_admin install -d -m 0700 "$AHOME/.ssh"
+  if [ ! -f "$key" ]; then as_admin ssh-keygen -q -t ed25519 -N '' -C "kb-deploy $KB_ID" -f "$key"; log "  deploy key del server creata: $key"; fi
+  if [[ "$KB_REMOTE" == git@github.com:* || "$KB_REMOTE" == ssh://git@github.com/* ]] && ! as_admin ssh-keygen -F github.com -f "$kh" >/dev/null 2>&1; then
+    local line fpr; line=$(ssh-keyscan -T 15 -t ed25519 github.com 2>/dev/null); fpr=$(ssh-keygen -lf - <<< "$line" 2>/dev/null | awk '{print $2}')
+    if [ -n "$line" ] && [ "$fpr" = "$GITHUB_ED25519_FPR" ]; then printf '%s\n' "$line" | as_admin tee -a "$kh" >/dev/null; log "  chiave host di GitHub verificata ($fpr)"
+    else log "  chiave host di GitHub non verificabile (rete assente o impronta diversa: $fpr)"; fi
+  fi
+  if [ -e "$OPS/knowledge-base" ] && [ ! -d "$OPS/knowledge-base/.git" ]; then   # copia incorporata della 0.2.0
+    mv "$OPS/knowledge-base" "$OPS/knowledge-base.v0.2.0-$TS"; chown -R "$ADMIN:$ADMIN" "$OPS/knowledge-base.v0.2.0-$TS"
+    log "  copia della Knowledge Base 0.2.0 spostata (conservata): $OPS/knowledge-base.v0.2.0-$TS"
+  fi
+  if [ -d "$OPS/knowledge-base/.git" ]; then as_admin "$OPS/bin/kb" sync; rc=$?; else as_admin "$OPS/bin/kb" init; rc=$?; fi
+  if [ "$rc" = 0 ] && [ -d "$OPS/knowledge-base/.git" ]; then
+    KB_OK=1; log "  Knowledge Base disponibile: $(as_admin "$OPS/bin/kb" status | head -1)"
+    if as_admin sh -c 'command -v crontab' >/dev/null; then as_admin "$OPS/bin/kb" schedule on | sed 's/^/  /' | tee -a "$LOG"
+    else log "  ATTENZIONE: cron assente, sincronizzazione periodica non configurata (usare kb sync a inizio lavoro)"; fi
+  else
+    log "  KNOWLEDGE BASE NON RECUPERATA: fase NON completata."
+    log "  Per il primo recupero (repository privato): registrare la chiave pubblica del server come deploy key del"
+    log "  repository (GitHub → Settings → Deploy keys; scrittura solo se il server deve pubblicare record):"
+    log "    $(cat "$key.pub")"
+    log "  poi, come $ADMIN: /srv/ops/bin/kb init   (oppure: sudo bootstrap.sh --admin $ADMIN --knowledge-base-only)"
+  fi
+}
+kb_setup || true
+
 if [ ! -d "$OPS/.git" ]; then as_admin git -C "$OPS" init -q -b main; log "  repository Git creato"; fi
 if ! as_admin git config --global user.email >/dev/null 2>&1 && ! as_admin git -C "$OPS" config user.email >/dev/null 2>&1; then
   as_admin git -C "$OPS" config user.name "$OWNER"; as_admin git -C "$OPS" config user.email "$ADMIN@$HOST"
@@ -291,8 +331,8 @@ else as_admin git -C "$OPS" commit -q -m "bootstrap: $([ "$KBONLY" = 1 ] && echo
 if [ "$KBONLY" = 1 ]; then
   log "== VERIFY"
   [ -z "$(as_admin git -C "$OPS" status --porcelain)" ] && log "  /srv/ops: repository pulito" || die "/srv/ops: modifiche non registrate"
-  [ -f "$OPS/knowledge-base/INDEX.md" ] && log "  knowledge base: $(find "$OPS/knowledge-base" -type f | wc -l) file, indice presente" || die "indice della knowledge base assente"
-  log "Fatto: solo la knowledge base è stata aggiornata; nessuna modifica operativa."
+  [ "$KB_OK" = 1 ] || { log "Knowledge Base NON recuperata: vedere le istruzioni sopra."; exit 4; }
+  log "Fatto: solo la Knowledge Base è stata aggiornata; nessuna modifica operativa."
   exit 0
 fi
 
@@ -341,5 +381,10 @@ if [ -d /run/systemd/system ]; then
   [ -z "$en" ] && log "  nessuna unit ops-* abilitata" || log "  unit ops-* abilitate: $en"
 fi
 [ "$v_ok" = 1 ] || die "verifica finale non superata (vedi sopra)"
+if [ "$KB_OK" != 1 ]; then
+  log "ATTENZIONE: Knowledge Base condivisa NON recuperata (fase non completata): vedere le istruzioni sopra."
+  log "Il resto è pronto. Prossimo passo, come $ADMIN in un nuovo terminale:  claude"
+  exit 4
+fi
 log "Fatto. Prossimo passo, come $ADMIN in un nuovo terminale:  claude"
 log "  (completare il login personale; l'agente trova la checklist in /srv/ops e prosegue secondo AGENTS.md)"

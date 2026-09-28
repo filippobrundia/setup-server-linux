@@ -15,48 +15,56 @@ Sulla macchina nuova, come **utente amministratore normale** creato dall'install
 non root), con l'impronta SHA-256 riportata nella pagina della release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.2.0/install.sh \
+curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.3.0/install.sh \
   | bash -s -- --sha256 <IMPRONTA> --check   # solo controllo: piano e conflitti, nessuna modifica
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.2.0/install.sh \
+curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.3.0/install.sh \
   | bash -s -- --sha256 <IMPRONTA>           # esecuzione (ripetibile)
 ```
 
-`install.sh` rifiuta root, scarica l'archivio della release `v0.2.0`, lo confronta con `SHA256SUMS` della release e
-con l'impronta passata a `--sha256`, lo estrae in `~/setup-server-linux-0.2.0` e avvia
+`install.sh` rifiuta root, scarica l'archivio della release `v0.3.0`, lo confronta con `SHA256SUMS` della release e
+con l'impronta passata a `--sha256`, lo estrae in `~/setup-server-linux-0.3.0` e avvia
 `sudo bootstrap.sh --admin <utente>` (sudo chiede la password). Claude Code e il suo login restano nell'account
 dell'amministratore. Opzione: `--owner "Nome"` (nome del proprietario usato nelle regole; di default il primo nome
 del campo GECOS).
 
-Alternativa manuale: scaricare `setup-server-linux-0.2.0.tar.gz` e `SHA256SUMS` dalla release,
+Alternativa manuale: scaricare `setup-server-linux-0.3.0.tar.gz` e `SHA256SUMS` dalla release,
 `sha256sum -c SHA256SUMS`, estrarre e lanciare `sudo ./bootstrap.sh --admin "$USER" [--check]`.
 
 Poi, in un **nuovo** terminale: `claude` → completare il login personale. L'agente parte in `/srv/ops`, trova
 `docs/bootstrap/avanzamento.md` con `STATO: IN CORSO` e prosegue con la checklist secondo `AGENTS.md`.
 
-## Knowledge Base tecnica ereditata
+## Knowledge Base condivisa tra server
 
-Il pacchetto distribuisce in `/srv/ops/knowledge-base/` la conoscenza tecnica **verificata e trasferibile** del
-server di origine (indice: `knowledge-base/INDEX.md`): configurazioni collaudate, problemi con cause accertate,
-esperimenti anche falliti, versioni di applicabilità, test riutilizzabili e rischi aperti. Primo argomento: Paperclip
-con agenti Codex isolati in un runner SSH (sandbox, proxy di uscita, reti, credenziali temporanee, pulizia,
-persistenza). `AGENTS.md` impone agli amministratori **KNOWLEDGE FIRST** (consultarla prima di intervenire) e
-**LEARN & CONSOLIDATE** (arricchirla dopo ogni conoscenza verificata).
+La conoscenza tecnica verificata sta in un **repository separato e condiviso**,
+`filippobrundia/server-knowledge-base` (privato), con copia locale in `/srv/ops/knowledge-base` gestita dallo
+strumento della foundation `/srv/ops/bin/kb`. Ogni server la consulta prima di intervenire e aggiunge ciò che impara
+come **record** indipendenti (APPEND ONLY); le regole per gli amministratori sono in `AGENTS.md` (SYNC BEFORE WORK,
+KNOWLEDGE FIRST, LEARN & CONSOLIDATE, VERIFY BEFORE PUBLISH, APPEND ONLY).
 
-Aggiornare **solo** la Knowledge Base da una release più recente, senza effetti operativi (niente pacchetti, agente,
-home o manutenzione; le pagine arricchite localmente vengono conservate e segnalate):
+| Comando | Effetto |
+|---|---|
+| `kb sync` | recupera i record degli altri server; non tocca il lavoro locale; senza rete usa la copia locale (e lo dichiara); mai modifiche ai programmi installati, mai esecuzione di script della KB |
+| `kb new "Titolo"` → `kb validate` → `kb publish` | nuovo record `RECORD-<data>-<server>-<casuale>`: metadati e sezioni obbligatorie, collegamenti, assenza di segreti e di dati riservati, pura aggiunta, recupero degli altri, push senza force (se respinto: recupero e nuovo tentativo) |
+| `kb status`, `kb index`, `kb search` | stato della copia, indice locale dei record (non versionato), ricerca |
+| `kb schedule on` | sincronizzazione leggera ogni 6 ore (crontab dell'amministratore) |
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/<versione>/install.sh \
-  | bash -s -- --sha256 <IMPRONTA> --knowledge-base-only
-```
+**Primo recupero su un server nuovo (repository privato).** Il bootstrap crea una **deploy key** del server
+(`~/.ssh/kb_deploy`), verifica la chiave host di GitHub e tenta `kb init`. Senza autorizzazione o senza rete si
+ferma con **esito 4** e il messaggio "KNOWLEDGE BASE NON RECUPERATA", stampando la chiave pubblica: il proprietario la
+registra nel repository (Settings → Deploy keys; con scrittura solo se il server deve pubblicare), poi
+`/srv/ops/bin/kb init` oppure `sudo bootstrap.sh --admin <utente> --knowledge-base-only`. Nessun token nel pacchetto.
+
+`--knowledge-base-only` aggiorna solo strumento, configurazione e copia della Knowledge Base (nessun pacchetto,
+agente, home o manutenzione). Opzioni: `--kb-remote URL`, `--kb-id NOME` (nome tecnico non sensibile del server).
+Una copia incorporata della versione 0.2.0 viene spostata in `knowledge-base.v0.2.0-<data>` (conservata).
 
 Il pacchetto ricrea la **foundation e la sua conoscenza**, non le applicazioni: nessuna installazione automatica di
-Paperclip o di altri servizi. La Knowledge Base descrive come installarli; i dati, i segreti e la configurazione di
-una specifica installazione (per ripristinare la stessa istanza) restano nei backup e nei repository del relativo
-progetto e non fanno parte di questo pacchetto.
+ciò che la Knowledge Base descrive. Dati, segreti e configurazione per ripristinare una specifica istanza restano
+nei backup e nei repository del relativo progetto.
 
-Sul server di origine la fonte è `/srv/ops/knowledge-base`; `tools/sync-knowledge-base.sh` la copia nel payload
-controllando credenziali, collegamenti e (con `PRIVATE_PATTERNS`) stringhe riservate del server.
+**Protezione lato GitHub.** Con il piano gratuito un repository privato non ammette regole di protezione del ramo:
+le modifiche distruttive sono impedite dallo strumento `kb` e dall'hook `pre-push` di ogni copia, mentre il workflow
+`append-only` del repository le **rileva** e le segnala (non può impedirle).
 
 ## Requisito Node.js
 
@@ -89,8 +97,8 @@ identici si saltano, quelli del pacchetto non modificati si aggiornano, quelli c
 | `payload/ops/` | ciò che diventa `/srv/ops` (`*.tmpl` completati con hostname, utente, proprietario, data) |
 | `payload/ops/maint/` | `ops-maint` (script root della finestra), unit `ops-*`, `install-maint`, modelli di backup/cron/Docker |
 | `payload/home/` | adattatori per la home dell'amministratore |
-| `payload/ops/knowledge-base/` | Knowledge Base tecnica (copia verificata della fonte del server di origine) |
-| `tools/sync-knowledge-base.sh` | sincronizzazione della Knowledge Base dal server di origine, con controlli di pubblicabilità |
+| `payload/ops/bin/kb`, `payload/ops/kb.conf.tmpl` | strumento e configurazione della Knowledge Base condivisa |
+| `tests/kb-scenario.sh` | collaudo dello strumento kb con un repository remoto fittizio e due copie |
 | `tests/` | collaudo in container (`run-container-test.sh`, `scenario.sh`) |
 
 Differenze rispetto al server di origine (solo parametrizzazione): nomi fissi `ops-*` al posto di `servern100-*`,
@@ -102,12 +110,17 @@ verificato: va estratto con sudo, riletto e parametrizzato prima di includerlo).
 
 ## Collaudo
 
-**Fatto — solo in container.** `tests/run-container-test.sh` (Docker, `ubuntu:24.04` usa e getta, senza systemd):
-**68/68 prove superate** con la versione 0.2.0: protezioni, `--check`, prima esecuzione, contenuto, idempotenza,
-conflitti, aggiornamento del pacchetto, adattatori, script, shellcheck e **Knowledge Base** (indice, regole in
-`AGENTS.md`, collegamenti risolti, impronte degli artefatti, `--knowledge-base-only`: pagine nuove create, invariate
-aggiornate, arricchite localmente conservate, nessun passo operativo, commit). `install.sh` non è stato eseguito
-in container.
+**Fatto — in container.** `tests/run-container-test.sh` (Docker, `ubuntu:24.04` usa e getta, senza systemd):
+**72/72 prove superate** con la versione 0.3.0, comprese quelle della Knowledge Base condivisa (su un repository remoto
+fittizio): primo recupero dal bootstrap, sincronizzazione ripetuta senza modifiche, regole in `AGENTS.md`, esito 4 e
+messaggio esplicito senza accesso al repository, migrazione di una copia 0.2.0, nessun passo operativo con
+`--knowledge-base-only`, e lo scenario `tests/kb-scenario.sh` (34/34: due copie indipendenti, pubblicazione e recupero,
+pubblicazioni concorrenti con push respinto e ritentato, rifiuto di modifiche, cancellazioni e push forzati, esclusione
+di chiavi, token, indirizzi privati ed email, record correttivi, funzionamento senza rete).
+**Fatto — sul server di origine** (fisico, Ubuntu 24.04): stesso scenario `kb` (34/34, repository locale) e prove sul
+repository GitHub reale con deploy key, due copie temporanee e record fittizi su un ramo di collaudo poi rimosso
+(pubblicazione concorrente con respingimento e nuovo tentativo, recupero reciproco, modifica, cancellazione e force push
+respinti). `install.sh` non è stato eseguito in container.
 
 **Da provare su una VM o macchina Ubuntu Server pulita, con systemd, prima dell'uso in produzione:**
 1. `bootstrap.sh` su Ubuntu Server reale (pacchetti di `ubuntu-server` già presenti, `unattended-upgrades` attivo

@@ -84,6 +84,11 @@ Se la macchina ha un solo disco, `/srv` e `DATA_MOUNT` sono partizioni o cartell
 
 ## 4. Repository `/srv/ops`
 
+**Knowledge Base condivisa** (repository separato, copia in `/srv/ops/knowledge-base`): `/srv/ops/bin/kb status`.
+Se non è stata recuperata dal bootstrap (repository privato): la chiave pubblica `~/.ssh/kb_deploy.pub` va registrata
+dal proprietario come deploy key del repository, poi `/srv/ops/bin/kb init`. Da lì valgono SYNC BEFORE WORK e le
+altre regole di `AGENTS.md`.
+
 - **Controllo:** `git -C /srv/ops status` pulito; `git log --oneline | tail -1` = distribuzione del pacchetto.
 - **Se manca:** rieseguire `bootstrap.sh` (ripetibile).
 - **Verifica:** l'agente avviato con `claude` dalla home carica `AGENTS.md` (sezione 12, punto 7).

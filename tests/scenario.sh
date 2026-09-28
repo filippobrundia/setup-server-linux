@@ -8,9 +8,16 @@ pass() { N=$((N+1)); echo "PASS $*"; }
 bad()  { N=$((N+1)); FAILS=$((FAILS+1)); echo "FAIL $*"; }
 t()    { local d=$1; shift; if "$@" >/dev/null 2>&1; then pass "$d"; else bad "$d"; fi; }
 tn()   { local d=$1; shift; if "$@" >/dev/null 2>&1; then bad "$d"; else pass "$d"; fi; }
-run()  { bash "$PKG/bootstrap.sh" "$@" > /tmp/out.txt 2>&1; echo $?; }
+KBARGS=(--kb-remote /kbremote.git --kb-id testsrv)
+run()  { bash "$PKG/bootstrap.sh" "$@" "${KBARGS[@]}" > /tmp/out.txt 2>&1; echo $?; }
 asu()  { runuser -u tester -- bash -c "cd ~ && $1"; }
 
+echo "== preparazione: repository remoto FITTIZIO della Knowledge Base"
+apt-get install -y -qq git >/dev/null 2>&1
+mkdir -p /tmp/kbsrc/records && cd /tmp/kbsrc && git init -q -b main && printf '# Indice (fittizio)\n\nKnowledge Base di prova.\n' > INDEX.md \
+  && printf '# Record\n\nFormato di prova.\n' > records/README.md && printf '.kb-index.md\n' > .gitignore \
+  && git -c user.name=t -c user.email=t@t add -A && git -c user.name=t -c user.email=t@t commit -qm "KB fittizia" && cd / \
+  && git clone -q --bare /tmp/kbsrc /kbremote.git && chmod -R a+rwX /kbremote.git && git config --system --add safe.directory '*'
 echo "== preparazione: utente amministratore"
 useradd -m -s /bin/bash -G sudo -c "Tester Uno,,," tester
 
@@ -33,6 +40,12 @@ rc=$(run --admin tester --knowledge-base-only --check)
 echo "== T3 prima esecuzione"
 rc=$(run --admin tester); cp /tmp/out.txt /tmp/first.txt
 [ "$rc" = 0 ] && pass "bootstrap completato" || { bad "bootstrap (rc=$rc)"; tail -30 /tmp/out.txt; }
+t "Knowledge Base recuperata (repository separato)" test -d /srv/ops/knowledge-base/.git
+t "kb status come amministratore" runuser -u tester -- /srv/ops/bin/kb status
+tn "knowledge-base non versionata nella foundation" bash -c "runuser -u tester -- git -C /srv/ops ls-files | grep -q '^knowledge-base/'"
+t "kb.conf con nome tecnico del server" grep -qx 'KB_SERVER_ID=testsrv' /srv/ops/kb.conf
+t "deploy key del server creata" test -f ~tester/.ssh/kb_deploy.pub
+t "cron assente segnalato (nessuna sincronizzazione periodica)" grep -q 'cron assente' /tmp/first.txt
 
 echo "== T4 contenuto distribuito"
 t "AGENTS.md con hostname" grep -q '^# testsrv — istruzioni' /srv/ops/AGENTS.md
@@ -80,36 +93,34 @@ rm -rf /tmp/pkg2; cp -a "$PKG" /tmp/pkg2; echo 'Riga aggiunta nella nuova versio
 bash /tmp/pkg2/bootstrap.sh --admin tester > /tmp/out.txt 2>&1; rc=$?
 [ "$rc" = 0 ] && grep -q 'update: docs/runbooks/controllo-rapido.md' /tmp/out.txt && pass "aggiorna solo i file non modificati localmente" || { bad "aggiornamento (rc=$rc)"; tail -5 /tmp/out.txt; }
 
-echo "== T12 Knowledge Base ereditata"
-t "indice della knowledge base" test -f /srv/ops/knowledge-base/INDEX.md
-t "pagina Paperclip raggiungibile dall'indice" grep -q 'tecnologie/paperclip/README.md' /srv/ops/knowledge-base/INDEX.md
-t "regola KNOWLEDGE FIRST in AGENTS.md" grep -q 'KNOWLEDGE FIRST' /srv/ops/AGENTS.md
-t "regola LEARN & CONSOLIDATE in AGENTS.md" grep -q 'LEARN & CONSOLIDATE' /srv/ops/AGENTS.md
-nl=0; for f in $(find /srv/ops/knowledge-base -name '*.md'); do d=$(dirname $f); for l in $(grep -oE '\]\([^)#]+' $f | sed 's/](//' | grep -v '^http'); do [ -e "$d/$l" ] || nl=$((nl+1)); done; done
-[ "$nl" = 0 ] && pass "collegamenti della knowledge base risolti sul server nuovo" || bad "collegamenti non risolti: $nl"
-t "impronte degli artefatti di riferimento" bash -c "cd /srv/ops/knowledge-base/tecnologie/paperclip/riferimento && sha256sum -c --quiet SHA256SUMS"
-# aggiornamento della sola knowledge base: pagina nuova, pagina invariata aggiornata, pagina arricchita localmente conservata
-rm -rf /tmp/pkg3; cp -a "$PKG" /tmp/pkg3
-printf '# Pagina nuova\n' > /tmp/pkg3/payload/ops/knowledge-base/trasversali/pagina-nuova.md
-echo 'Aggiornamento del pacchetto.' >> /tmp/pkg3/payload/ops/knowledge-base/trasversali/ssh-processi-orfani.md
-echo 'Aggiornamento del pacchetto.' >> /tmp/pkg3/payload/ops/knowledge-base/trasversali/segreti-nei-container.md
-echo '# modifica che NON deve essere applicata in modalità knowledge base' >> /tmp/pkg3/payload/ops/bin/quick-check
-echo 'Nota locale verificata.' >> /srv/ops/knowledge-base/trasversali/segreti-nei-container.md
-runuser -u tester -- git -C /srv/ops commit -qam "arricchimento locale"
-QC=$(sha256sum /srv/ops/bin/quick-check); NC=$(runuser -u tester -- git -C /srv/ops rev-list --count HEAD); MF=$(wc -l < /srv/ops/.bootstrap/manifest)
-bash /tmp/pkg3/bootstrap.sh --admin tester --knowledge-base-only > /tmp/out.txt 2>&1; rc=$?
-[ "$rc" = 0 ] && pass "--knowledge-base-only completato" || { bad "kb-only (rc=$rc)"; tail -5 /tmp/out.txt; }
-t "pagina nuova creata" test -f /srv/ops/knowledge-base/trasversali/pagina-nuova.md
-t "pagina invariata aggiornata" grep -q 'Aggiornamento del pacchetto.' /srv/ops/knowledge-base/trasversali/ssh-processi-orfani.md
-t "pagina arricchita localmente conservata" grep -q 'Nota locale verificata.' /srv/ops/knowledge-base/trasversali/segreti-nei-container.md
-t "conservazione segnalata" grep -q 'conservato (modificato localmente): knowledge-base/trasversali/segreti-nei-container.md' /tmp/out.txt
-t "nessuna modifica operativa (quick-check invariato)" bash -c "[ \"\$(sha256sum /srv/ops/bin/quick-check)\" = \"$QC\" ]"
-tn "nessun passo operativo eseguito" grep -qE '== (1|3|4|5)/5' /tmp/out.txt
-t "commit dell'aggiornamento" bash -c "[ \$(runuser -u tester -- git -C /srv/ops rev-list --count HEAD) -gt $NC ] && [ -z \"\$(runuser -u tester -- git -C /srv/ops status --porcelain)\" ]"
-t "manifest unito (voci non toccate conservate)" bash -c "[ \$(wc -l < /srv/ops/.bootstrap/manifest) -ge $MF ]"
-rc=$(bash /tmp/pkg3/bootstrap.sh --admin tester --check > /tmp/out.txt 2>&1; echo $?)
-[ "$rc" = 0 ] && grep -q 'aggiorna /srv/ops/bin/quick-check' /tmp/out.txt && grep -q 'conserva /srv/ops/knowledge-base/trasversali/segreti-nei-container.md' /tmp/out.txt \
-  && pass "esecuzione completa (--check): aggiornamenti operativi solo lì, pagina locale della KB conservata" || { bad "esecuzione completa dopo kb-only (rc=$rc)"; grep -E 'CONFLITTO|STOP' /tmp/out.txt | head -3; }
+echo "== T12 Knowledge Base condivisa"
+t "regola SYNC BEFORE WORK" grep -q 'SYNC BEFORE WORK' /srv/ops/AGENTS.md
+t "regola VERIFY BEFORE PUBLISH" grep -q 'VERIFY BEFORE PUBLISH' /srv/ops/AGENTS.md
+t "regola APPEND ONLY" grep -q 'APPEND ONLY' /srv/ops/AGENTS.md
+t "regole KNOWLEDGE FIRST e LEARN & CONSOLIDATE" bash -c "grep -q 'KNOWLEDGE FIRST' /srv/ops/AGENTS.md && grep -q 'LEARN & CONSOLIDATE' /srv/ops/AGENTS.md"
+H=$(git -C /srv/ops/knowledge-base rev-parse HEAD)
+runuser -u tester -- /srv/ops/bin/kb sync --quiet; runuser -u tester -- /srv/ops/bin/kb sync --quiet
+[ "$(git -C /srv/ops/knowledge-base rev-parse HEAD)" = "$H" ] && pass "sincronizzazione ripetuta senza modifiche" || bad "sync ripetuto"
+echo "-- scenario completo dello strumento kb (due copie, dati fittizi)"
+runuser -u tester -- bash "$PKG/tests/kb-scenario.sh" /srv/ops/bin/kb /kbremote.git > /tmp/kbs.txt 2>&1; rc=$?
+grep -E '^(FAIL|== RISULTATO)' /tmp/kbs.txt | sed 's/^/   /'
+[ "$rc" = 0 ] && pass "scenario kb: $(grep -o '[0-9]*/[0-9]* superati' /tmp/kbs.txt)" || bad "scenario kb"
+echo "-- remoto irraggiungibile: fase dichiarata NON completata"
+mv /srv/ops/knowledge-base /tmp/kb-salvata; cp -p /srv/ops/kb.conf /tmp/kb.conf.salvato
+sed -i 's|^KB_REMOTE=.*|KB_REMOTE=ssh://git@192.0.2.1/inesistente.git|' /srv/ops/kb.conf
+bash "$PKG/bootstrap.sh" --admin tester --knowledge-base-only > /tmp/out.txt 2>&1; rc=$?
+[ "$rc" = 4 ] && grep -q 'NON RECUPERATA' /tmp/out.txt && pass "senza accesso: esito 4 e messaggio esplicito" || { bad "remoto irraggiungibile (rc=$rc)"; tail -5 /tmp/out.txt; }
+t "istruzioni con la chiave pubblica del server" grep -q 'ssh-ed25519' /tmp/out.txt
+tn "nessun passo operativo in --knowledge-base-only" grep -qE '== (1|3|4|5)/5' /tmp/out.txt
+cp -p /tmp/kb.conf.salvato /srv/ops/kb.conf; mv /tmp/kb-salvata /srv/ops/knowledge-base
+echo "-- migrazione da una copia incorporata 0.2.0"
+mv /srv/ops/knowledge-base /tmp/kb-salvata; mkdir -p /srv/ops/knowledge-base; echo "pagina locale 0.2.0" > /srv/ops/knowledge-base/pagina.md; chown -R tester: /srv/ops/knowledge-base
+bash "$PKG/bootstrap.sh" --admin tester --knowledge-base-only > /tmp/out.txt 2>&1; rc=$?
+[ "$rc" = 0 ] && pass "kb-only su copia 0.2.0: completato" || { bad "migrazione 0.2.0 (rc=$rc)"; tail -5 /tmp/out.txt; }
+t "copia 0.2.0 conservata" bash -c "grep -q 'pagina locale 0.2.0' /srv/ops/knowledge-base.v0.2.0-*/pagina.md"
+t "nuova copia dal repository condiviso" test -d /srv/ops/knowledge-base/.git
+t "foundation pulita dopo la migrazione" bash -c "[ -z \"\$(runuser -u tester -- git -C /srv/ops status --porcelain)\" ]"
+rm -rf /srv/ops/knowledge-base.v0.2.0-* /tmp/kb-salvata
 
 echo "== T9 conflitti nella home e nei parametri"
 useradd -m -s /bin/bash -G sudo tester2; echo 'alias claude=true' >> ~tester2/.bash_aliases

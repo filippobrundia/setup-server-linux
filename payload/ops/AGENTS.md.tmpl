@@ -99,26 +99,41 @@ chiedergli come risolvere tecnicamente il problema.
   solo segnali tecnici senza contenuti (`docs/runbooks/monitoraggio-esterno.md`); il resto si segnala nella
   prima sessione utile e in `STATUS.md`.
 
-## Knowledge Base tecnica (regole permanenti per gli amministratori)
+## Knowledge Base tecnica condivisa (regole permanenti per gli amministratori)
 
 Valgono per gli assistenti tecnici e amministratori del server, **non** per gli agenti applicativi (per esempio i
 dipendenti di un'azienda di agenti), che seguono le regole dei rispettivi progetti.
 
+La Knowledge Base è un **repository Git separato e condiviso tra server**, con copia locale in `knowledge-base/`
+(non versionata in questa foundation), gestita da `bin/kb` (configurazione `kb.conf`: repository, nome tecnico del
+server, deploy key). Se non è ancora stata recuperata: `bin/kb init` (vedi `kb.conf` e la deploy key del server).
+
+**SYNC BEFORE WORK.** All'inizio di ogni incarico tecnico eseguire `bin/kb sync`. Senza rete si consulta la copia
+locale dichiarando che potrebbe non essere aggiornata. La sincronizzazione non modifica mai i programmi installati e
+non esegue script della Knowledge Base.
+
 **KNOWLEDGE FIRST.** Prima di installare, configurare, aggiornare o diagnosticare un componente, consultare
-`knowledge-base/INDEX.md` e cercare la conoscenza pertinente. Se esiste una soluzione già verificata, controllarne
-l'applicabilità (versioni, condizioni) e riutilizzarla prima di avviare nuove indagini; non ripetere tentativi già
-documentati come falliti.
+`knowledge-base/INDEX.md`, l'indice dei record (`bin/kb index`, file `knowledge-base/.kb-index.md`) e `bin/kb search`.
+Se esiste una soluzione verificata, controllarne l'applicabilità (versioni, ambiente) e riutilizzarla prima di
+avviare nuove indagini; non ripetere tentativi già documentati come falliti.
 
 **LEARN & CONSOLIDATE.** Durante un'attività tecnica significativa, annotare esperimenti, scoperte ed errori utili.
-Prima di chiudere il lavoro, trasformare le nuove conoscenze **verificate** in documentazione operativa in
-`knowledge-base/`, aggiornare l'indice e, quando possibile, i test di regressione. Vale anche per implementazioni
-riuscite senza problemi. Non documentare operazioni banali; nessun segreto, indirizzo o dato riservato: la Knowledge
-Base è trasferibile, mentre i dettagli di questo server restano in `docs/`.
+Prima di chiudere il lavoro, registrare le nuove conoscenze come **nuovo record** (`bin/kb new`, completare,
+`bin/kb validate`, `bin/kb publish`), con i test quando possibile; vale anche per implementazioni riuscite senza
+problemi. Non documentare operazioni banali; i dettagli di questo server restano in `docs/`.
 
-Una sola fonte autorevole per argomento: le altre pagine vi rimandano. Tutte le regole di sicurezza, approvazione,
-PRECHECK, rollback e verifica restano invariate. La Knowledge Base ereditata dal bootstrap si aggiorna con
-`bootstrap.sh --knowledge-base-only` (solo documentazione, nessuna modifica operativa; le pagine arricchite localmente
-vengono conservate).
+**VERIFY BEFORE PUBLISH.** Pubblicare come `verificato` solo ciò che è stato effettivamente collaudato, indicando
+tecnologia e versione, sistema operativo, ambiente della prova (server fisico, VM, container), prerequisiti,
+procedura, risultato osservato, test, limitazioni, nome tecnico del server e data. Una soluzione provata in un solo
+ambiente non è universale; ipotesi ed esperimenti incompleti solo come `ipotesi` o `parziale`. Mai password, token,
+chiavi private, dati personali, indirizzi o informazioni riservate dell'infrastruttura (`bin/kb validate` li cerca;
+le stringhe riservate di questo server vanno in `kb-private-patterns.txt`, mai pubblicato).
+
+**APPEND ONLY.** Mai modificare o cancellare record pubblicati: una correzione o smentita è un nuovo record con
+`corregge: RECORD-…` (cosa è cambiato, nuove prove, procedura da usare). Mai force push. Le pagine consolidate si
+modificano solo con l'approvazione del proprietario del repository.
+
+Tutte le regole di sicurezza, approvazione, PRECHECK, rollback e verifica restano invariate.
 
 ## Regola di manutenzione (dopo ogni modifica al server)
 
@@ -150,7 +165,8 @@ registrali allo stesso modo prima di chiudere.
 | `docs/decisions.md` | Decisioni prese, con motivazione |
 | `docs/future-improvements.md` | Miglioramenti possibili, non attivi e non bloccanti |
 | `docs/runbooks/` | Procedure operative (controllo rapido, manutenzione, monitoraggio, …) |
-| `knowledge-base/` | Conoscenza tecnica verificata e trasferibile (indice: `knowledge-base/INDEX.md`) |
+| `knowledge-base/` | Copia locale del repository condiviso della Knowledge Base (APPEND ONLY; non versionata qui) |
+| `bin/kb`, `kb.conf` | Strumento e configurazione della Knowledge Base condivisa |
 | `bin/quick-check` | Controllo rapido dello stato del server (sola lettura) |
 | `maint/`, `bin/cli-update`, `bin/maint-approve` | Manutenzione automatica: sorgenti, unit, `install-maint`, modelli (`docs/runbooks/manutenzione.md`) |
 

@@ -1,0 +1,9 @@
+# Configurazione dello strumento kb (Knowledge Base condivisa tra server). Nessuna credenziale qui: solo il percorso
+# della deploy key del server. Nome del server: tecnico e non sensibile (compare nei record pubblicati).
+KB_DIR=/srv/ops/knowledge-base
+KB_REMOTE=@@KB_REMOTE@@
+KB_BRANCH=main
+KB_SERVER_ID=@@KB_SERVER_ID@@
+KB_SSH_KEY=@@AHOME@@/.ssh/kb_deploy
+# File locale (non pubblicato) con stringhe riservate di questo server da non pubblicare mai, una per riga.
+KB_PRIVATE_PATTERNS=/srv/ops/kb-private-patterns.txt

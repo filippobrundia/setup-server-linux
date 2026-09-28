@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+# kb — Knowledge Base tecnica condivisa tra server (repository Git separato, APPEND ONLY).
+# Strumento della foundation: NON viene aggiornato dalla sincronizzazione e non esegue mai script della KB.
+#
+#   kb init                  primo recupero (clone) in $KB_DIR, hook anti-modifica, indice
+#   kb sync [--quiet]        recupera i nuovi record; non tocca il lavoro locale; senza rete usa la copia locale
+#   kb status                ultima sincronizzazione, record locali non pubblicati, stato della copia
+#   kb new "Titolo"          crea records/RECORD-<data>-<server>-<casuale>/RECORD.md da completare
+#   kb validate RECORD-…     struttura, metadati, collegamenti, assenza di segreti
+#   kb publish RECORD-…      valida, verifica che sia una pura aggiunta, recupera gli altri, pubblica (mai force)
+#   kb index                 rigenera l'indice locale dei record (.kb-index.md, non versionato)
+#   kb search TESTO          cerca in tutta la KB
+#   kb schedule on|off       sincronizzazione periodica leggera (crontab dell'utente, ogni 6 ore)
+#
+# Configurazione: /srv/ops/kb.conf (KB_DIR, KB_REMOTE, KB_BRANCH, KB_SERVER_ID, KB_SSH_KEY, KB_PRIVATE_PATTERNS).
+# Credenziali: deploy key del server (KB_SSH_KEY), mai nei file della KB, negli script o nei log.
+set -uo pipefail
+CONF=${KB_CONF:-/srv/ops/kb.conf}
+# shellcheck disable=SC1090
+[ -r "$CONF" ] && . "$CONF"
+KB_DIR=${KB_DIR:-/srv/ops/knowledge-base}
+KB_REMOTE=${KB_REMOTE:-}
+KB_BRANCH=${KB_BRANCH:-main}
+KB_SERVER_ID=${KB_SERVER_ID:-}
+KB_SSH_KEY=${KB_SSH_KEY:-}
+KB_PRIVATE_PATTERNS=${KB_PRIVATE_PATTERNS:-}
+TIMEOUT=${KB_TIMEOUT:-30}
+QUIET=0
+say()  { [ "$QUIET" = 1 ] || echo "$*"; }
+die()  { echo "kb: STOP: $*" >&2; exit 3; }
+warn() { echo "kb: ATTENZIONE: $*" >&2; }
+export GIT_TERMINAL_PROMPT=0
+if [ -n "$KB_SSH_KEY" ]; then
+  export GIT_SSH_COMMAND="ssh -i $KB_SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=$TIMEOUT -o StrictHostKeyChecking=yes"
+fi
+g() { git -C "$KB_DIR" "$@"; }
+set_identity() {  # identità tecnica non personale per i commit e i rebase della copia locale
+  g config user.name "kb ${KB_SERVER_ID:-server}"; g config user.email "kb+${KB_SERVER_ID:-server}@invalid"
+  # anche i comandi git diretti usano la deploy key del server (e quindi passano dall'hook APPEND ONLY)
+  [ -n "$KB_SSH_KEY" ] && g config core.sshCommand "ssh -i $KB_SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes" || true
+}
+remote_git() { timeout $((TIMEOUT * 4)) git -C "$KB_DIR" "$@"; }
+STATE() { echo "$KB_DIR/.git/kb-state"; }
+
+RECORD_RE='^RECORD-[0-9]{8}-[a-z0-9][a-z0-9-]{0,23}-[0-9a-f]{6}$'
+SECRET_RE='-----BEGIN [A-Z ]*PRIVATE KEY|sk-(proj-)?[A-Za-z0-9]{20,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|hc-ping\.com/[0-9a-f]{8}|(password|passwd|secret|token)[[:space:]]*[:=][[:space:]]*[^[:space:]<]{6,}'
+# Indirizzi privati ammessi solo come esempi generici noti (tutti gli altri bloccano la pubblicazione).
+EXAMPLE_IPS='^(127\.0\.0\.1|10\.0\.0\.1|172\.17\.0\.1|192\.168\.1\.1|169\.254\.169\.254)$'
+
+# ---------------------------------------------------------------------------------------------- controlli
+append_only_check() {  # $1 = base, $2 = testa: solo file AGGIUNTI sotto records/RECORD-*/
+  local bad
+  bad=$(g diff --name-status --no-renames "$1" "$2" | awk -v re="^records/RECORD-" '$1 != "A" || $2 !~ re {print}')
+  [ -z "$bad" ] || { echo "$bad" | sed 's/^/  non ammesso: /' >&2; return 1; }
+}
+install_hook() {  # blocca, da questa copia, qualunque push che non sia una pura aggiunta di record
+  cat > "$KB_DIR/.git/hooks/pre-push" <<'EOF'
+#!/bin/sh
+# Installato da /srv/ops/bin/kb: APPEND ONLY. Manutenzione curata del proprietario: KB_CURATION=1 git push …
+[ "${KB_CURATION:-0}" = 1 ] && exit 0
+z=0000000000000000000000000000000000000000
+while read -r lref lsha rref rsha; do
+  [ "$lsha" = "$z" ] && { echo "kb: cancellazione di ramo remoto rifiutata" >&2; exit 1; }
+  [ "$rsha" = "$z" ] && continue
+  git merge-base --is-ancestor "$rsha" "$lsha" || { echo "kb: push non lineare rifiutato" >&2; exit 1; }
+  bad=$(git diff --name-status --no-renames "$rsha" "$lsha" | awk '$1 != "A" || $2 !~ "^records/RECORD-" {print}')
+  [ -z "$bad" ] || { echo "kb: APPEND ONLY, modifiche non ammesse:" >&2; echo "$bad" >&2; exit 1; }
+done
+exit 0
+EOF
+  chmod 0755 "$KB_DIR/.git/hooks/pre-push"
+}
+meta() { awk -v k="$2" 'NR==1 && $0!="---" {exit} NR>1 && $0=="---" {exit} NR>1 { i=index($0,":"); if (substr($0,1,i-1)==k) { v=substr($0,i+1); sub(/^[ \t]+/,"",v); sub(/[ \t]+$/,"",v); print v; exit } }' "$1"; }
+section_filled() {  # $1 file, $2 titolo della sezione: contenuto non vuoto e senza segnaposto
+  awk -v h="## $2" '$0==h {on=1; next} on && /^## / {exit} on {print}' "$1" | grep -vE '^[[:space:]]*$|<[^>]*>|^[[:space:]]*(TODO|DA COMPLETARE)' | grep -q .
+}
+validate() {  # $1 = id del record
+  local id=$1 d="$KB_DIR/records/$1" f="$KB_DIR/records/$1/RECORD.md" err=0 st k s
+  [[ "$id" =~ $RECORD_RE ]] || { echo "  identificativo non valido: $id"; return 1; }
+  [ -f "$f" ] || { echo "  manca $f"; return 1; }
+  [ "$(meta "$f" id)" = "$id" ] || { echo "  metadato id diverso dal nome della cartella"; err=1; }
+  st=$(meta "$f" stato)
+  case $st in verificato|parziale|ipotesi) ;; *) echo "  stato non valido: '$st' (verificato | parziale | ipotesi)"; err=1 ;; esac
+  for k in titolo tecnologie sistema ambiente server data; do
+    v=$(meta "$f" $k); [ -n "$v" ] || { echo "  metadato mancante: $k"; err=1; continue; }
+    case $v in *"<"*|*">"*) echo "  metadato ancora da compilare: $k"; err=1 ;; esac
+  done
+  [[ "$(meta "$f" data)" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "  data non valida (AAAA-MM-GG)"; err=1; }
+  if [ "$st" = verificato ] || [ "$st" = parziale ]; then
+    for s in "Problema o obiettivo" "Prerequisiti" "Procedura" "Risultato osservato" "Test eseguiti" "Limitazioni"; do
+      section_filled "$f" "$s" || { echo "  sezione vuota o mancante: ## $s"; err=1; }
+    done
+  fi
+  for c in $(meta "$f" corregge | tr ',;' '  '); do
+    [ -d "$KB_DIR/records/$c" ] || { echo "  'corregge' cita un record inesistente: $c"; err=1; }
+  done
+  # collegamenti relativi
+  while IFS= read -r md; do
+    while IFS= read -r l; do [ -e "$(dirname "$md")/$l" ] || { echo "  collegamento non risolto in ${md#$KB_DIR/}: $l"; err=1; }
+    done < <(grep -oE '\]\([^)#]+' "$md" | sed 's/](//' | grep -vE '^(https?|mailto):' || true)
+  done < <(find "$d" -name '*.md')
+  # segreti, dati personali, indirizzi e stringhe riservate dell'infrastruttura
+  if grep -rIlE -i -- "$SECRET_RE" "$d" >/dev/null 2>&1; then echo "  possibili credenziali in: $(grep -rIlE -i -- "$SECRET_RE" "$d" | sed "s|$KB_DIR/||" | paste -sd' ')"; err=1; fi
+  if grep -rIlE -- '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}' "$d" >/dev/null 2>&1; then echo "  indirizzi email in: $(grep -rIlE -- '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}' "$d" | sed "s|$KB_DIR/||" | paste -sd' ')"; err=1; fi
+  local ips; ips=$(grep -rIohE '\b(10\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])|192\.168)\.[0-9]{1,3}\.[0-9]{1,3}\b' "$d" | sort -u | grep -vE "$EXAMPLE_IPS" || true)
+  [ -z "$ips" ] || { echo "  indirizzi privati dell'infrastruttura: $(echo $ips)"; err=1; }
+  if [ -n "$KB_PRIVATE_PATTERNS" ] && [ -r "$KB_PRIVATE_PATTERNS" ] && grep -rIlF -f "$KB_PRIVATE_PATTERNS" "$d" >/dev/null 2>&1; then
+    echo "  stringhe riservate del server (KB_PRIVATE_PATTERNS) in: $(grep -rIlF -f "$KB_PRIVATE_PATTERNS" "$d" | sed "s|$KB_DIR/||" | paste -sd' ')"; err=1; fi
+  [ -z "$(find "$d" -type f -size +2M)" ] || { echo "  file oltre 2 MB"; err=1; }
+  [ -z "$(find "$d" -type f -empty)" ] || { echo "  file vuoti: $(find "$d" -type f -empty | sed "s|$KB_DIR/||" | paste -sd' ')"; err=1; }
+  return $err
+}
+
+# ---------------------------------------------------------------------------------------------- comandi
+cmd_index() {
+  local out="$KB_DIR/.kb-index.md" f id
+  declare -A CORRETTO
+  for f in "$KB_DIR"/records/RECORD-*/RECORD.md; do [ -f "$f" ] || continue
+    for c in $(meta "$f" corregge | tr ',;' '  '); do CORRETTO[$c]+="$(meta "$f" id) "; done; done
+  { echo "# Indice dei record (generato da \`kb index\` il $(date -u '+%F %H:%M') UTC; non versionato)"; echo
+    echo "| Record | Data | Stato | Tecnologie | Titolo | Corretto da |"; echo "|---|---|---|---|---|---|"
+    local recs=("$KB_DIR"/records/RECORD-*/RECORD.md) k
+    for ((k=${#recs[@]}-1; k>=0; k--)); do f=${recs[$k]}; [ -f "$f" ] || continue; id=$(meta "$f" id)
+      echo "| [$id](records/$id/RECORD.md) | $(meta "$f" data) | $(meta "$f" stato) | $(meta "$f" tecnologie) | $(meta "$f" titolo) | ${CORRETTO[$id]:--} |"
+    done; } > "$out"
+  say "indice: $(grep -c '^| \[RECORD' "$out") record in ${out#$KB_DIR/}"
+}
+cmd_init() {
+  [ -n "$KB_REMOTE" ] || die "KB_REMOTE non impostato in $CONF"
+  if [ -d "$KB_DIR/.git" ]; then say "copia già presente in $KB_DIR"; set_identity; install_hook; cmd_index; return 0; fi
+  if [ -e "$KB_DIR" ] && [ -n "$(ls -A "$KB_DIR" 2>/dev/null)" ]; then
+    die "$KB_DIR esiste e non è un repository Git: spostarlo (es. $KB_DIR.precedente) e rieseguire; nessuna modifica"; fi
+  rmdir "$KB_DIR" 2>/dev/null || true
+  if ! timeout $((TIMEOUT * 4)) git clone -q --branch "$KB_BRANCH" "$KB_REMOTE" "$KB_DIR" 2>/tmp/kb-clone.$$; then
+    local why; why=$(tail -1 /tmp/kb-clone.$$); rm -f /tmp/kb-clone.$$
+    echo "kb: KNOWLEDGE BASE NON RECUPERATA ($why)." >&2
+    echo "    Controllare rete e autorizzazione (deploy key del server: ${KB_SSH_KEY:-non impostata}.pub) e rieseguire: kb init" >&2
+    exit 4
+  fi
+  rm -f /tmp/kb-clone.$$
+  set_identity; install_hook
+  date -u +%s > "$(STATE)"; cmd_index; say "Knowledge Base recuperata in $KB_DIR ($(g rev-parse --short HEAD))"
+}
+cmd_sync() {
+  [ -d "$KB_DIR/.git" ] || die "copia locale non inizializzata: kb init"
+  local last; last=$(cat "$(STATE)" 2>/dev/null || echo 0)
+  if ! remote_git fetch -q origin "$KB_BRANCH" 2>/dev/null; then
+    echo "kb: GitHub non raggiungibile: uso la copia locale, aggiornata al $( [ "$last" -gt 0 ] && date -u -d "@$last" '+%F %H:%M UTC' || echo 'mai' ) (potrebbe non essere aggiornata)" >&2
+    exit 0
+  fi
+  local ahead behind; ahead=$(g rev-list --count "origin/$KB_BRANCH..HEAD"); behind=$(g rev-list --count "HEAD..origin/$KB_BRANCH")
+  if [ -n "$(g status --porcelain --untracked-files=no)" ]; then
+    warn "file versionati modificati localmente: nessun aggiornamento applicato (APPEND ONLY: non si modificano record né pagine; creare un nuovo record)"
+    g status --short --untracked-files=no | sed 's/^/  /' >&2; exit 1
+  fi
+  if [ "$behind" -gt 0 ]; then
+    if [ "$ahead" -gt 0 ]; then  # record locali non ancora pubblicati: si riapplicano sopra quelli nuovi, solo se sono pure aggiunte
+      append_only_check "$(g merge-base HEAD "origin/$KB_BRANCH")" HEAD \
+        || { warn "commit locali non pubblicati che non sono pure aggiunte: sincronizzazione sospesa"; exit 1; }
+      set_identity
+      g rebase -q "origin/$KB_BRANCH" 2>/dev/null || { g rebase --abort 2>/dev/null; warn "CONFLITTO riapplicando i record locali: nessuna modifica, risolvere a mano"; exit 1; }
+    else
+      g merge -q --ff-only "origin/$KB_BRANCH" || { warn "avanzamento non lineare: nessuna modifica"; exit 1; }
+    fi
+  fi
+  date -u +%s > "$(STATE)"; set_identity; install_hook; cmd_index
+  say "sincronizzata: $behind nuovi commit recuperati, $ahead commit locali non pubblicati, $(g status --porcelain | grep -c '^??') file locali non versionati (conservati)"
+}
+cmd_status() {
+  [ -d "$KB_DIR/.git" ] || { echo "Knowledge Base: NON inizializzata in $KB_DIR (kb init)"; exit 1; }
+  local last; last=$(cat "$(STATE)" 2>/dev/null || echo 0)
+  echo "copia: $KB_DIR ($(g rev-parse --short HEAD), ramo $KB_BRANCH)"
+  echo "ultima sincronizzazione riuscita: $( [ "$last" -gt 0 ] && date -u -d "@$last" '+%F %H:%M UTC' || echo mai )"
+  echo "commit locali non pubblicati: $(g rev-list --count "origin/$KB_BRANCH..HEAD" 2>/dev/null)"
+  echo "record in bozza (non versionati): $(g status --porcelain records 2>/dev/null | grep -c '^?? records/RECORD-')"
+}
+cmd_new() {
+  [ -d "$KB_DIR/.git" ] || die "copia locale non inizializzata: kb init"
+  [[ "$KB_SERVER_ID" =~ ^[a-z0-9][a-z0-9-]{0,23}$ ]] || die "KB_SERVER_ID non valido in $CONF (nome tecnico non sensibile: minuscole, cifre, trattini)"
+  local title=${1:?uso: kb new "Titolo"} id d os
+  id="RECORD-$(date -u +%Y%m%d)-$KB_SERVER_ID-$(head -c3 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  d="$KB_DIR/records/$id"; mkdir -p "$d"
+  os=$(. /etc/os-release 2>/dev/null; echo "${NAME:-?} ${VERSION_ID:-?}")
+  cat > "$d/RECORD.md" <<EOF
+---
+id: $id
+titolo: $title
+stato: ipotesi
+tecnologie: <componente versione; componente versione>
+sistema: $os
+ambiente: <server fisico | macchina virtuale | container (immagine) — dove è stata fatta la prova>
+server: $KB_SERVER_ID
+data: $(date -u +%F)
+corregge:
+---
+
+# $title
+
+## Problema o obiettivo
+
+## Prerequisiti
+
+## Procedura
+
+## Risultato osservato
+
+## Test eseguiti
+
+## Limitazioni
+
+## Se corregge un record precedente
+Cosa è cambiato, nuove prove, quale procedura usare ora (lasciare vuoto se non corregge nulla).
+EOF
+  echo "$d/RECORD.md"
+  echo "Completare, impostare 'stato: verificato' solo dopo il collaudo, poi: kb validate $id && kb publish $id"
+}
+cmd_validate() { local id=${1:?uso: kb validate RECORD-…}; if validate "$id"; then echo "valido: $id"; else echo "NON valido: $id" >&2; exit 1; fi; }
+cmd_publish() {
+  local id=${1:?uso: kb publish RECORD-…} n st
+  [ -d "$KB_DIR/.git" ] || die "copia locale non inizializzata: kb init"
+  validate "$id" || die "record non valido: correggerlo prima di pubblicare"
+  st=$(meta "$KB_DIR/records/$id/RECORD.md" stato)
+  [ -z "$(g status --porcelain --untracked-files=no)" ] || die "file versionati modificati localmente: APPEND ONLY, nessuna pubblicazione"
+  remote_git fetch -q origin "$KB_BRANCH" || die "GitHub non raggiungibile: il record resta locale ($id); riprovare più tardi"
+  g cat-file -e "origin/$KB_BRANCH:records/$id" 2>/dev/null && die "$id esiste già nel repository condiviso: si pubblicano solo record nuovi"
+  g ls-files --error-unmatch "records/$id" >/dev/null 2>&1 && die "$id è già versionato localmente"
+  set_identity; g add -- "records/$id"
+  g commit -q -m "record $id ($st)" -- "records/$id" || die "commit non riuscito"
+  for n in 1 2 3; do
+    if [ "$(g rev-list --count "HEAD..origin/$KB_BRANCH")" -gt 0 ]; then
+      g rebase -q "origin/$KB_BRANCH" 2>/dev/null || { g rebase --abort 2>/dev/null; die "conflitto con i record pubblicati da altri: nessun push"; }
+    fi
+    append_only_check "origin/$KB_BRANCH" HEAD || die "la pubblicazione non è una pura aggiunta di record: interrotta"
+    if remote_git push -q origin "HEAD:$KB_BRANCH" 2>/tmp/kb-push.$$; then
+      rm -f /tmp/kb-push.$$; date -u +%s > "$(STATE)"; cmd_index; echo "pubblicato: $id ($(g rev-parse --short HEAD))"; return 0; fi
+    if grep -qE 'rejected|non-fast-forward|fetch first' /tmp/kb-push.$$; then
+      say "il repository remoto è avanzato (altro server): recupero e nuovo tentativo $n/3"; remote_git fetch -q origin "$KB_BRANCH" || true
+    else rm -f /tmp/kb-push.$$; die "push non riuscito; il record resta come commit locale"; fi
+  done
+  rm -f /tmp/kb-push.$$; die "push respinto 3 volte: il record resta come commit locale; riprovare con kb publish dopo kb sync"
+}
+cmd_search() { local q=${1:?uso: kb search TESTO}; grep -rIni --exclude-dir=.git -- "$q" "$KB_DIR" | sed "s|$KB_DIR/||" | head -50; }
+cmd_schedule() {
+  local self line; self=$(readlink -f "$0"); line="23 */6 * * * $self sync --quiet >/dev/null 2>&1"
+  local others; others=$({ crontab -l 2>/dev/null || true; } | { grep -vF "$(readlink -f "$0") sync" || true; })
+  case ${1:-} in
+    on)  { [ -n "$others" ] && echo "$others"; echo "$line"; } | crontab -; echo "sincronizzazione periodica attiva (ogni 6 ore, utente $(id -un))" ;;
+    off) { [ -n "$others" ] && echo "$others" || true; } | crontab -; echo "sincronizzazione periodica disattivata" ;;
+    *) die "uso: kb schedule on|off" ;;
+  esac
+}
+
+case ${1:-} in
+  init) cmd_init ;;
+  sync) [ "${2:-}" = --quiet ] && QUIET=1; cmd_sync ;;
+  status) cmd_status ;;
+  new) shift; cmd_new "$@" ;;
+  validate) cmd_validate "${2:-}" ;;
+  publish) cmd_publish "${2:-}" ;;
+  index) cmd_index ;;
+  search) shift; cmd_search "$*" ;;
+  schedule) cmd_schedule "${2:-}" ;;
+  *) sed -n '2,19p' "$0"; exit 2 ;;
+esac
