@@ -54,7 +54,7 @@ Sistemi: Ubuntu Server LTS; collaudo su macchina reale con **Ubuntu 26.04** (VM)
 
 | Correzione o novità | Dove |
 |---|---|
-| **Comando unico** `sudo ops-installa`: una autenticazione per esecuzione, parametri ed esclusioni dichiarati prima (`PROFILO`, `ESCLUSIONI` in `host.conf`, rispettate anche da `quick-check --gate`), dry-run → esecuzione → VERIFY per ogni passo, arresto al primo errore, ripresa senza ripetere i passi superati, log per comando in pseudo-terminale (`script -q -e`, nessuna pipe su apt/dpkg) leggibili dall'amministratore, avanzamento aggiornato con commit, `STATO: COMPLETATO` solo a passo 12 superato | `docs/bootstrap/ops-installa`, `bootstrap.sh` |
+| **Comando unico** `sudo ops-installa`: una autenticazione per esecuzione, parametri ed esclusioni dichiarati prima (`PROFILO`, `ESCLUSIONI` in `host.conf`; un'esclusione chiude solo il collaudo locale, `STATO: COMPLETATO CON ESCLUSIONI`; la copia remota esclusa continua a bloccare `quick-check --gate`, `ops-maint attended` e la finestra), dry-run → esecuzione → VERIFY per ogni passo, arresto al primo errore, ripresa senza ripetere i passi superati, log per comando in pseudo-terminale (`script -q -e`, nessuna pipe su apt/dpkg) leggibili dall'amministratore, avanzamento aggiornato con commit, `STATO: COMPLETATO` solo a passo 12 superato | `docs/bootstrap/ops-installa`, `bootstrap.sh` |
 | Integrità: solo file del pacchetto con l'impronta registrata da `bootstrap.sh` in `/var/lib/ops-bootstrap` (root), eseguiti da una copia di root; correzioni locali solo con `--dichiara-correzione` e conferma scritta | `ops-installa` |
 | Conferma del firewall dal nuovo login SSH rilevata nella stessa esecuzione (o rilanciando dal nuovo login), riavvio presidiato con ripresa dopo l'avvio, approvazione della finestra con conferma scritta | `ops-installa` |
 | Rilevazione dei parametri senza sudo e richiesta unica dei dati mancanti | `docs/bootstrap/rileva-parametri.sh` |
@@ -161,7 +161,7 @@ verificato: va estratto con sudo, riletto e parametrizzato prima di includerlo).
 ## Collaudo
 
 **Fatto — in container (0.5.0).** `tests/run-container-test.sh` (Docker, container usa e getta senza systemd;
-`IMAGE=ubuntu:26.04` per la 26.04): **@@NTEST@@**. Oltre alle prove della 0.4.0 (distribuzione, idempotenza,
+`IMAGE=ubuntu:26.04` per la 26.04): **199/199 prove superate sia su `ubuntu:24.04` sia su `ubuntu:26.04`** (dopo la correzione del blocco della copia remota). Oltre alle prove della 0.4.0 (distribuzione, idempotenza,
 conflitti, Knowledge Base, `quick-check`, logrotate, lettore di `host.conf`, passi 3, 9, 10 parziali, shellcheck),
 `tests/installa-scenario.sh` prova:
 - installazione di `ops-installa` e delle impronte di root da parte di `bootstrap.sh`; `--piano` senza sudo con tutti i
@@ -170,7 +170,13 @@ conflitti, Knowledge Base, `quick-check`, logrotate, lettore di `host.conf`, pas
 - regressioni della consegna: difetto 5 riprodotto con la riga 0.4.0 e corretto, nessun ciclo a rischio negli script,
   12.5 con `disabled (routed)`, `ss` al posto di `who`, ora del ripristino, niente `| head` nel passo 7;
 - passo 5 su gruppi reali (lxd, docker, adm; `sync` atteso; `NOPASSWD` → arresto; rollback);
-- rilevazione dei parametri e `--scrivi` (mai sovrascrive); `quick-check` e `--gate` con `ESCLUSIONI`;
+- rilevazione dei parametri e `--scrivi` (mai sovrascrive);
+- esclusioni e manutenzione: con 10.3 esclusa la copia remota mancante resta un'attenzione, `quick-check --gate` esce
+  con 1 e `ops-maint window` (stesso controllo di `attended` e della finestra; `DRY_RUN` con riavvio richiesto)
+  **rinvia**; controprova: con la copia remota eseguita lo stesso `ops-maint` arriva al riavvio. La verifica 11.1
+  accetta il gate bloccato solo dalla copia remota (collaudo locale), mai con altri problemi; 10.3 esclusa senza 12.8
+  è rifiutata; con esclusioni l'esito è `STATO: COMPLETATO CON ESCLUSIONI` (validazione per produzione incompleta),
+  senza esclusioni `STATO: COMPLETATO`;
 - flusso completo con gli script dei passi simulati: ordine e dry-run, sosta e conferma del firewall (nella stessa
   esecuzione o dal nuovo login), riavvio normale e con `ops-maint attended`, ripresa dopo l'avvio, approvazione della
   finestra, `STATO: COMPLETATO`, rilancio senza modifiche; arresto al primo errore con codice reale nel log e ripresa

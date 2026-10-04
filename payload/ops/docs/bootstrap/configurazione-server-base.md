@@ -37,7 +37,11 @@ conferme importanti. Niente sequenze di `sudo` a mano, niente script locali, nie
    richiesta** con tutto: `PROFILO` (`base` o `docker`), `ESCLUSIONI` (tra `2 7.1 10.3 11.2 12.8`, ognuna con il
    motivo), destinazione della copia remota, monitoraggio esterno. Poi `rileva-parametri.sh --scrivi --profilo …
    --esclusioni "…"`, controllo del diff, commit di `host.conf` e `ops-installa --piano` (sola lettura) senza
-   problemi. Le esclusioni si registrano anche in `docs/decisions.md`.
+   problemi. Le esclusioni si registrano anche in `docs/decisions.md`. **Un'esclusione permette solo di chiudere il
+   collaudo locale**: l'esito è "collaudo locale completato con esclusioni" (`STATO: COMPLETATO CON ESCLUSIONI`),
+   la validazione per produzione resta incompleta. In particolare con 10.3 esclusa la copia remota mancante continua a
+   bloccare `quick-check --gate`, `ops-maint attended` e l'attivazione e l'esecuzione della finestra: va esclusa
+   anche 12.8 (`ops-installa` lo richiede).
 2. **Comando unico (proprietario).** Da una **sessione SSH** dalla LAN (terminale vero; serve per confermare il
    firewall): `sudo ops-installa`. Una password; il programma mostra piano ed esclusioni e chiede `SI` una volta, poi
    esegue i passi in ordine (dry-run → esecuzione solo con dry-run a 0 → VERIFY) e si ferma al primo esito diverso
@@ -53,7 +57,8 @@ conferme importanti. Niente sequenze di `sudo` a mano, niente script locali, nie
      `docs/decisions.md`).
 4. **Esiti (agente, senza sudo).** `/var/log/ops-installa/ultimo/riepilogo.log` (passi, codici, log), un file per
    comando con output e codice reale, `/var/log/ops-installa/stato`. `ops-installa` aggiorna da solo
-   `avanzamento.md` (con commit) e scrive `STATO: COMPLETATO` solo con il passo 12 superato. L'agente completa poi
+   `avanzamento.md` (con commit) e scrive `STATO: COMPLETATO` solo con il passo 12 superato senza esclusioni
+   (altrimenti `STATO: COMPLETATO CON ESCLUSIONI (…)`: validazione per produzione incompleta). L'agente completa poi
    `docs/` della macchina (overview, network, system, STATUS, CHANGELOG, decisioni).
 
 Esiti di `ops-installa`: 0 completato · 1 passo non superato (correggere, poi rilanciare: riprende da quel passo, i

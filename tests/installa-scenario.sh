@@ -112,14 +112,46 @@ sed -i "s|^BORG_REPO=.*|BORG_REPO=/x/repo|; s|^BORG_LOG=.*|BORG_LOG=$Q/borgmatic
 printf 'Creating archive at "/x/repo::testsrv-%s"\nSuccessfully ran configuration file /etc/borgmatic/config.yaml\n' "$TS" > $Q/borgmatic.log; chmod -R a+rX $Q
 qg() { runuser -u tester -- env OPS_DIR=$Q /srv/ops/bin/quick-check --gate 2>&1; }
 qg | grep -q 'ATTENZIONE copia remota non configurata' && pass "senza esclusione: copia remota mancante = ATTENZIONE" || { bad "gate senza esclusione"; qg; }
-sed -i 's|^ESCLUSIONI=.*|ESCLUSIONI="10.3 11.2"|' $Q/host.conf
+sed -i 's|^ESCLUSIONI=.*|ESCLUSIONI="10.3 11.2 12.8"|' $Q/host.conf
 out=$(qg); rc=$?
-grep -q 'ESCLUSO    copia remota (10.3' <<<"$out" && ! grep -q 'ATTENZIONE copia remota' <<<"$out" \
-  && pass "con 10.3 in ESCLUSIONI: riga ESCLUSO, non contata (gate: esito $rc)" || { bad "gate con esclusione"; echo "$out"; }
+[ "$rc" = 1 ] && grep -q 'ATTENZIONE copia remota non configurata .*10.3 esclusa: manutenzione automatica bloccata' <<<"$out" \
+  && pass "con 10.3 in ESCLUSIONI la copia remota mancante resta ATTENZIONE: --gate esce con 1 (bloccato)" || { bad "gate con 10.3 esclusa (rc=$rc)"; echo "$out"; }
 out=$(runuser -u tester -- env OPS_DIR=$Q /srv/ops/bin/quick-check 2>&1)
 grep -q 'ESCLUSO    monitoraggio esterno (11.2' <<<"$out" && ! grep -q 'ATTENZIONE monitoraggio esterno' <<<"$out" \
   && pass "con 11.2 in ESCLUSIONI: monitoraggio esterno ESCLUSO" || { bad "11.2 escluso"; echo "$out" | grep -i monitor; }
-rm -rf $Q
+# il blocco vale per la manutenzione: ops-maint (stesso controllo di attended e della finestra) rinvia
+M=/tmp/om; rm -rf $M; mkdir -p $M/bin $M/state/inbox; cp /etc/ops-maint.conf $M/conf
+printf '#!/bin/sh\nOPS_DIR=%s exec /srv/ops/bin/quick-check "$@"\n' "$Q" > $M/qc; chmod 0755 $M/qc; chmod 0755 $M
+sed -i "s|^QUICK_CHECK=.*|QUICK_CHECK=$M/qc|" $M/conf; touch $M/lock $M/reboot; printf 'APPROVED=yes\n' > $M/state/inbox/window.conf
+om() { env DRY_RUN=1 MAINT_TEST_PATH=$M/bin MAINT_CONF=$M/conf MAINT_STATE=$M/state MAINT_LOCK=$M/lock MAINT_REBOOT_FLAG=$M/reboot /usr/local/sbin/ops-maint window 2>&1; }
+out=$(om)
+grep -q 'RINVIO: sistema non sano o backup non verificati: ATTENZIONE copia remota non configurata' <<<"$out" && ! grep -q 'riavvierei' <<<"$out" \
+  && pass "10.3 esclusa NON aggira il blocco: ops-maint window (DRY_RUN, riavvio richiesto) rinvia per la copia remota" || { bad "ops-maint con 10.3 esclusa"; echo "$out"; }
+sed -i 's|^OFFSITE=.*|OFFSITE="prova"|; s|^OFFSITE_CRON_MATCH=.*|OFFSITE_CRON_MATCH="mai-presente"|' $Q/host.conf
+out=$(om)
+grep -q 'RINVIO: .*copia remota: nessun avvio' <<<"$out" && pass "con OFFSITE ma senza copia eseguita ops-maint rinvia (ERRORE copia remota)" || { bad "ops-maint senza copia eseguita"; echo "$out"; }
+# controprova positiva: copia remota eseguita (journal di cron simulato) → stesso ops-maint arriva al riavvio
+sed -i 's|^OFFSITE_CRON_MATCH=.*|OFFSITE_CRON_MATCH="rclone sync"|' $Q/host.conf
+printf '#!/bin/sh\necho "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%S+00:00) testsrv CRON[1]: (root) CMD (rclone sync /x/repo remoto:prova)"\n' > $M/bin/journalctl
+printf '#!/bin/sh\nexit 0\n' > $M/bin/systemctl; chmod 0755 $M/bin $M/bin/*
+out=$(om)
+grep -q 'DRY_RUN: riavvierei' <<<"$out" && ! grep -q RINVIO <<<"$out" \
+  && pass "controprova: con la copia remota eseguita lo stesso ops-maint supera il controllo (DRY_RUN: riavvierei)" || { bad "controprova positiva ops-maint"; echo "$out"; }
+# verifica 11.1 di ops-installa: gate bloccato SOLO dalla copia remota accettato con 10.3 esclusa, altrimenti KO
+G=/tmp/og; rm -rf $G; cp -a /srv/ops $G; cp $Q/borgmatic.log $G/ 2>/dev/null; chown -R tester:tester $G
+sed -i "s|^BORG_REPO=.*|BORG_REPO=/x/repo|; s|^BORG_LOG=.*|BORG_LOG=$Q/borgmatic.log|; s|^SERVICES=.*|SERVICES=\"ssh cron ufw fail2ban\"|; s|^MOUNTS=.*|MOUNTS=\"/\"|; s|^OFFSITE=.*|OFFSITE=\"\"|; s|^LAN_CIDR=.*|LAN_CIDR=\"10.0.0.0/24\"|" $G/host.conf
+mkdir -p $M/fsd; printf '#!/bin/sh\n[ "$1" = is-enabled ] && exit 1\nexit 0\n' > $M/fsd/systemctl; chmod 0755 $M/fsd $M/fsd/systemctl
+vg() { PATH=$M/fsd:$PATH OPS_DIR=$G bash $D/verifiche-base.sh gate 2>&1; }
+sed -i 's|^ESCLUSIONI=.*|ESCLUSIONI="10.3 12.8"|' $G/host.conf
+out=$(vg); rc=$?
+[ "$rc" = 0 ] && grep -q 'bloccato SOLO dalla copia remota' <<<"$out" && pass "11.1 con 10.3 esclusa: superata solo come collaudo locale (gate bloccato dalla sola copia remota)" || { bad "11.1 con esclusione (rc=$rc)"; echo "$out"; }
+sed -i 's|^ESCLUSIONI=.*|ESCLUSIONI=""|' $G/host.conf
+out=$(vg); rc=$?
+[ "$rc" = 1 ] && grep -q 'KO  quick-check --gate: uscita 1' <<<"$out" && pass "11.1 senza esclusione e senza copia remota: non superata" || { bad "11.1 senza esclusione (rc=$rc)"; echo "$out"; }
+sed -i 's|^ESCLUSIONI=.*|ESCLUSIONI="10.3 12.8"|; s|^MOUNTS=.*|MOUNTS="/ /non-montato"|' $G/host.conf
+out=$(vg); rc=$?
+[ "$rc" = 1 ] && pass "11.1 con 10.3 esclusa e un altro problema (disco non montato): non superata" || { bad "11.1 altro problema (rc=$rc)"; echo "$out"; }
+rm -rf $Q $M $G
 
 echo "== T22 flusso unico e ripresa (radice di prova, passi simulati)"
 IT=/tmp/it; rm -rf $IT; mkdir -p $IT/srv $IT/fakebin $IT/rc $IT/var/lib/ops-maint/inbox $IT/var/run /tmp/it-dati
@@ -149,7 +181,7 @@ echo boot-1 > $IT/boot_id
 printf 'APPROVED=no\n' > $IT/var/lib/ops-maint/inbox/window.conf; chown tester:tester $IT/var/lib/ops-maint/inbox/window.conf
 chown root:tester $IT/var/lib/ops-maint/inbox; chmod 2770 $IT/var/lib/ops-maint/inbox
 HC=$IT/srv/ops/host.conf
-sed -i 's|^LAN_CIDR=.*|LAN_CIDR="10.0.0.0/24"|; s|^DATA_MOUNT=.*|DATA_MOUNT="/tmp/it-dati"|; s|^SERVICES=.*|SERVICES="ssh cron ufw fail2ban"|; s|^PROFILO=.*|PROFILO="base"|; s|^ESCLUSIONI=.*|ESCLUSIONI="2 7.1 10.3 11.2"|' $HC
+sed -i 's|^LAN_CIDR=.*|LAN_CIDR="10.0.0.0/24"|; s|^DATA_MOUNT=.*|DATA_MOUNT="/tmp/it-dati"|; s|^SERVICES=.*|SERVICES="ssh cron ufw fail2ban"|; s|^PROFILO=.*|PROFILO="base"|; s|^ESCLUSIONI=.*|ESCLUSIONI="2 7.1 11.2"|; s|^OFFSITE=.*|OFFSITE="remoto:prova"|' $HC
 runuser -u tester -- git -C $IT/srv/ops commit -qam "prova: parametri" >/dev/null
 reref() {  # impronte di riferimento della radice di prova = file attuali (come dopo bootstrap.sh)
   install -d -m 0700 $IT/var/lib/ops-bootstrap
@@ -185,8 +217,8 @@ t "stato: 7 in attesa di conferma SSH" grep -qE '^7 attesa-ssh ' $L/stato
 # esecuzione 2 (ripresa dal nuovo login): conferma SSH, passi 8–12, sosta del riavvio
 : > $IT/calls; echo "0 0 10.0.0.2:22 10.0.0.9:50111" >> $IT/ss.txt
 rc=$(oi 'RIAVVIA\n')
-want="passo7-impostazioni.sh --confirm|passo9-manutenzione.sh --dry-run|passo9-manutenzione.sh|passo10-backup.sh --dry-run|passo10-backup.sh|passo10b-rotazione-verifica.sh|verifiche-base.sh gate|passo12-verifiche.sh|install-maint enable postboot|systemctl reboot"
-[ "$rc" = 5 ] && [ "$(calls)" = "$want" ] && pass "ripresa: nessun passo ripetuto, conferma SSH dal nuovo login, 8/10.3/11.2 esclusi, riavvio (esito 5)" || { bad "esecuzione 2 (rc=$rc)"; calls; tail -15 $IT/out.txt; }
+want="passo7-impostazioni.sh --confirm|passo9-manutenzione.sh --dry-run|passo9-manutenzione.sh|passo10-backup.sh --dry-run|passo10-backup.sh|passo10b-rotazione-verifica.sh|verifiche-base.sh offsite|verifiche-base.sh gate|passo12-verifiche.sh|install-maint enable postboot|systemctl reboot"
+[ "$rc" = 5 ] && [ "$(calls)" = "$want" ] && pass "ripresa: nessun passo ripetuto, conferma SSH dal nuovo login, 8 e 11.2 esclusi, riavvio (esito 5)" || { bad "esecuzione 2 (rc=$rc)"; calls; tail -15 $IT/out.txt; }
 grep -q "^BORG_REPO=\"/tmp/it-dati/dati/backup/borg-repo-plain\"" $HC && runuser -u tester -- git -C $IT/srv/ops log --format=%s | grep -q 'BORG_REPO in host.conf' \
   && pass "BORG_REPO scritto in host.conf con commit" || bad "BORG_REPO"
 [ "$(row 8)" = escluso ] && [ "$(row 10)" = fatto ] && [ "$(row 12)" = "in attesa" ] && pass "avanzamento: 8 escluso (profilo), 10 fatto, 12 in attesa" || { bad "avanzamento 2"; grep '^| ' $IT/srv/ops/docs/bootstrap/avanzamento.md; }
@@ -202,8 +234,10 @@ want="verifiche-base.sh dopo-riavvio|verifiche-base.sh monitoraggio|verifiche-ba
 [ "$rc" = 0 ] && [ "$(calls)" = "$want" ] && pass "dopo il riavvio: controlli, attivazione, completata (esito 0)" || { bad "esecuzione 4 (rc=$rc)"; calls; tail -15 $IT/out.txt; }
 grep -qx 'APPROVED=yes' $IT/var/lib/ops-maint/inbox/window.conf && [ "$(stat -c %U $IT/var/lib/ops-maint/inbox/window.conf)" = tester ] \
   && pass "finestra approvata con conferma scritta (APPROVED=yes, file dell'amministratore)" || bad "approvazione"
-grep -qx 'STATO: COMPLETATO' $IT/srv/ops/docs/bootstrap/avanzamento.md && [ "$(row 12)" = fatto ] && [ "$(row 11)" = fatto ] \
-  && pass "avanzamento: STATO: COMPLETATO solo a passo 12 superato" || { bad "completamento"; cat $IT/srv/ops/docs/bootstrap/avanzamento.md; }
+grep -qx 'STATO: COMPLETATO CON ESCLUSIONI (2 7.1 11.2): validazione per produzione incompleta' $IT/srv/ops/docs/bootstrap/avanzamento.md \
+  && [ "$(row 12)" = fatto ] && [ "$(row 11)" = fatto ] && grep -q 'COLLAUDO LOCALE COMPLETATO CON ESCLUSIONI (2 7.1 11.2): VALIDAZIONE PER PRODUZIONE INCOMPLETA' $IT/out.txt \
+  && ! grep -qx 'STATO: COMPLETATO' $IT/srv/ops/docs/bootstrap/avanzamento.md \
+  && pass "con esclusioni: collaudo locale completato con esclusioni, validazione per produzione incompleta (non STATO: COMPLETATO)" || { bad "completamento con esclusioni"; cat $IT/srv/ops/docs/bootstrap/avanzamento.md; tail -5 $IT/out.txt; }
 t "repository di prova pulito dopo i commit" bash -c "[ -z \"\$(runuser -u tester -- git -C $IT/srv/ops status --porcelain)\" ]"
 : > $IT/calls; rc=$(oi '')
 [ "$rc" = 0 ] && [ -z "$(calls)" ] && pass "rilancio a configurazione completata: nessuna modifica" || bad "rilancio finale (rc=$rc)"
@@ -257,7 +291,8 @@ rc=$(timeout 60 bash -c "printf 'SI\n\n' > $IT/tty; OPS_INSTALLA_TEST_ROOT=$IT b
   && pass "Invio senza nuovo login: nessuna conferma, nuova richiesta, poi sosta (esito 5)" || { bad "Invio senza login (rc=$rc)"; tail -6 $IT/out.txt; }
 # riavvio con aggiornamenti in attesa: ops-maint attended, poi controlli dopo l'avvio
 fresh; install -m 0600 /dev/null $IT/var/lib/ops-bootstrap/installa.state
-for id in 0 1 3 4 5 6 7 9 10 10b 11.1 12; do echo "$id fatto 2026-10-04T00:00:00Z prova" >> $IT/var/lib/ops-bootstrap/installa.state; done
+sed -i 's|^ESCLUSIONI=.*|ESCLUSIONI=""|' $HC; runuser -u tester -- git -C $IT/srv/ops commit -qam "prova: nessuna esclusione" >/dev/null
+for id in 0 1 2 3 4 5 6 7.1 7 9 10 10b 10.3 11.1 11.2 12; do echo "$id fatto 2026-10-04T00:00:00Z prova" >> $IT/var/lib/ops-bootstrap/installa.state; done
 mkdir -p $IT/usr/local/sbin; printf '#!/bin/bash\necho "ops-maint $*" >> "$OPS_INSTALLA_TEST_ROOT/calls"\ntouch "$OPS_INSTALLA_TEST_ROOT/var/lib/ops-maint/postboot-pending"\n' > $IT/usr/local/sbin/ops-maint
 chmod +x $IT/usr/local/sbin/ops-maint; touch $IT/var/run/reboot-required
 rc=$(oi 'SI\n')
@@ -266,11 +301,14 @@ rc=$(oi 'SI\n')
 rm -f $IT/var/lib/ops-maint/postboot-pending $IT/var/run/reboot-required; echo boot-2 > $IT/boot_id; : > $IT/calls
 rc=$(oi 'APPROVO\n')
 [ "$rc" = 0 ] && grep -q '^verifiche-base.sh dopo-riavvio' $IT/calls && pass "dopo il riavvio di ops-maint attended: controlli e completamento" || { bad "dopo attended (rc=$rc)"; calls; }
+grep -qx 'STATO: COMPLETATO' $IT/srv/ops/docs/bootstrap/avanzamento.md && grep -q 'COMPLETATA SENZA ESCLUSIONI' $IT/out.txt \
+  && pass "senza esclusioni: STATO: COMPLETATO" || { bad "completamento senza esclusioni"; grep STATO $IT/srv/ops/docs/bootstrap/avanzamento.md; }
 rm -rf $IT/usr
 
 # parametri: tutti i problemi in una volta, nessun passo
 fresh; sed -i 's|^PROFILO=.*|PROFILO=""|; s|^LAN_CIDR=.*|LAN_CIDR=""|; s|^ESCLUSIONI=.*|ESCLUSIONI="6 10.3"|' $HC
 rc=$(oi 'SI\n')
 [ "$rc" = 3 ] && [ ! -e $IT/calls ] && grep -q 'PROFILO vuoto' $IT/out.txt && grep -q 'LAN_CIDR vuoto' $IT/out.txt && grep -q "'6' non ammesso" $IT/out.txt \
+  && grep -q '10.3 in ESCLUSIONI: la copia remota mancante blocca finestra e ops-maint attended, aggiungere anche 12.8' $IT/out.txt \
   && pass "parametri incompleti: elenco unico, nessun passo (esito 3)" || { bad "parametri (rc=$rc)"; tail -8 $IT/out.txt; }
 rm -rf $IT /tmp/it-dati

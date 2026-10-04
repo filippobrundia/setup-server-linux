@@ -8,7 +8,7 @@
 #   repo          4     repository /srv/ops e copia della Knowledge Base (kb status come amministratore)
 #   rete          7.1   indirizzo statico sull'interfaccia della route di default, gateway in LAN_CIDR, DNS
 #   offsite       10.3  /etc/cron.d/offsite-sync compilato e rclone check --size-only con 0 differenze
-#   gate          11.1  quick-check --gate con uscita 0 (le ESCLUSIONI di host.conf sono rispettate)
+#   gate          11.1  quick-check --gate con uscita 0; con 10.3 esclusa: bloccato solo dalla copia remota (atteso)
 #   healthchecks  11.2  controllo Healthchecks "up"
 #   dopo-riavvio  12.4  montaggi, unit, journal del boot precedente, servizi, container, UFW
 #   monitoraggio  12.6  quick-check senza ERRORE; Healthchecks "up" se 11.2 non è escluso
@@ -83,10 +83,17 @@ v_offsite() {
 }
 
 v_gate() {
-  local out rc=0
+  local out rc=0 others
   out=$(as_admin "$OPS/bin/quick-check" --gate 2>&1) || rc=$?
   echo "$out" | sed 's/^/  /'
-  [ "$rc" -eq 0 ] && ok "quick-check --gate: uscita 0" || ko "quick-check --gate: uscita $rc"
+  if [ "$rc" -eq 0 ]; then ok "quick-check --gate: uscita 0"; return; fi
+  # con 10.3 esclusa il gate DEVE restare bloccato dalla sola copia remota: collaudo locale, non produzione
+  others=$(grep -E '^  (ATTENZIONE|ERRORE)' <<<"$out" | grep -v 'ATTENZIONE copia remota non configurata' || true)
+  if excluded 10.3 && [ "$rc" -eq 1 ] && [ -z "$others" ] && grep -q 'ATTENZIONE copia remota non configurata' <<<"$out"; then
+    ok "quick-check --gate bloccato SOLO dalla copia remota (10.3 esclusa): resto sano; finestra e ops-maint attended restano bloccati"
+  else
+    ko "quick-check --gate: uscita $rc"
+  fi
 }
 
 v_healthchecks() {

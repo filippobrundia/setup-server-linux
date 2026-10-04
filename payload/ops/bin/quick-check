@@ -20,7 +20,8 @@ warnings=0; errors=0
 ok()   { printf '  OK         %s\n' "$*"; }
 warn() { printf '  ATTENZIONE %s\n' "$*"; warnings=$((warnings + 1)); }
 fail() { printf '  ERRORE     %s\n' "$*"; errors=$((errors + 1)); }
-# passi esclusi per decisione (ESCLUSIONI in host.conf): mostrati, mai contati come superati né come attenzioni
+# passi esclusi per decisione (ESCLUSIONI in host.conf): mostrati, mai contati come superati. Solo 11.2 (monitoraggio
+# esterno, fuori da --gate) diventa ESCLUSO; la copia remota esclusa (10.3) resta un'attenzione che blocca --gate.
 skip() { printf '  ESCLUSO    %s\n' "$*"; }
 excluded() { [[ " ${ESCLUSIONI:-} " == *" $1 "* ]]; }
 
@@ -125,10 +126,9 @@ else
       fail "ultimo run di borgmatic con errori (vedi $BORG_LOG)"
     fi
   fi
-  if [ -z "$OFFSITE" ] && excluded 10.3; then
-    skip "copia remota (10.3 in ESCLUSIONI, host.conf)"
-  elif [ -z "$OFFSITE" ]; then
-    warn "copia remota non configurata (OFFSITE vuoto in host.conf)"
+  # anche con 10.3 in ESCLUSIONI resta un'attenzione: --gate (finestra, ops-maint attended) deve restare bloccato
+  if [ -z "$OFFSITE" ]; then
+    warn "copia remota non configurata (OFFSITE vuoto in host.conf)$(excluded 10.3 && echo ' — 10.3 esclusa: manutenzione automatica bloccata')"
   else
     off=$(last_cron_run "$OFFSITE_CRON_MATCH")
     if [ -z "$off" ]; then

@@ -103,6 +103,7 @@ st_publish() {
 
 # ------------------------------------------------------------------ parametri
 excluded() { [[ " $ESCLUSIONI " == *" $1 "* ]]; }
+esclusi_dichiarati() { echo $ESCLUSIONI; }   # ESCLUSIONI di host.conf (il profilo base non è un'esclusione)
 step_field() { local IFS='|'; read -r S_ID S_SEC S_DESC S_ACT <<<"$1"; }
 planned_status() {  # stato previsto di un passo: fatto | escluso | profilo | <stato registrato> | da-fare
   local id=$1 cur; cur=$(st_get "$id")
@@ -131,6 +132,8 @@ load_params() {  # $1 = file passi-comune.sh da usare; raccoglie TUTTI i problem
   if [ "$PROFILO" = base ]; then [[ " $SERVICES " != *" docker "* ]] || PROBLEMI+=("profilo base: SERVICES contiene docker"); fi
   [ -z "$CONTAINERS" ] && [ "${SQLITE_SNAPSHOTS:-0}" = 0 ] || PROBLEMI+=("CONTAINERS/SQLITE_SNAPSHOTS: la configurazione di base è senza servizi (aggiungerli dopo, sezione 8.2)")
   if ! excluded 10.3; then [ -n "$OFFSITE" ] || PROBLEMI+=("OFFSITE vuoto: destinazione della copia remota (o 10.3 in ESCLUSIONI)"); fi
+  # senza copia remota la manutenzione automatica resta bloccata (quick-check --gate): 12.8 non è eseguibile
+  if excluded 10.3 && ! excluded 12.8; then PROBLEMI+=("10.3 in ESCLUSIONI: la copia remota mancante blocca finestra e ops-maint attended, aggiungere anche 12.8 a ESCLUSIONI"); fi
   return 0
 }
 
@@ -236,9 +239,9 @@ update_progress() {  # $1 = completato (0/1)
     map+="$sec|$r"$'\n'
   done
   kb=$(st_get 4); [ "$kb" = fatto ] && map+="kb|fatto|kb status superato (ops-installa)"$'\n'
-  as_admin env AV_MAP="$map" AV_DATE="$(date -u +%F)" AV_DONE="${1:-0}" awk -F'|' '
+  as_admin env AV_MAP="$map" AV_DATE="$(date -u +%F)" AV_DONE="${1:-0}" AV_ESCL="$(esclusi_dichiarati)" awk -F'|' '
     BEGIN { n = split(ENVIRON["AV_MAP"], L, "\n"); for (i = 1; i <= n; i++) if (L[i] != "") { split(L[i], p, "|"); st[p[1]] = p[2]; nt[p[1]] = p[3] } }
-    /^STATO: / && ENVIRON["AV_DONE"] == "1" { print "STATO: COMPLETATO"; next }
+    /^STATO: / && ENVIRON["AV_DONE"] == "1" { print (ENVIRON["AV_ESCL"] == "" ? "STATO: COMPLETATO" : "STATO: COMPLETATO CON ESCLUSIONI (" ENVIRON["AV_ESCL"] "): validazione per produzione incompleta"); next }
     /^\| [0-9]+\. / { k = $2; sub(/^ /, "", k); sub(/\..*/, "", k)
                      if (k in st) { printf "|%s| %s | %s | %s |\n", $2, st[k], ENVIRON["AV_DATE"], nt[k]; next } }
     /^\| Knowledge Base condivisa/ && ("kb" in st) { printf "|%s| %s | %s | %s |\n", $2, st["kb"], ENVIRON["AV_DATE"], nt["kb"]; next }
@@ -404,6 +407,8 @@ print_plan() {
   say "Configurazione iniziale di $HOST — amministratore $ADMIN, profilo ${PROFILO:-?}, pacchetto $(cat "$OPS/.bootstrap/version" 2>/dev/null || echo ?)"
   say "Parametri: LAN_CIDR=$LAN_CIDR DATA_MOUNT=$DATA_MOUNT MOUNTS=\"$MOUNTS\" SERVICES=\"$SERVICES\" OFFSITE=${OFFSITE:-(vuoto)}"
   say "Esclusioni dichiarate: ${ESCLUSIONI:-nessuna}"
+  [ -z "$ESCLUSIONI" ] || say "Con esclusioni l'esito possibile è \"collaudo locale completato con esclusioni\": la validazione per produzione resta incompleta."
+  ! excluded 10.3 || say "10.3 esclusa: la copia remota mancante continua a bloccare quick-check --gate, ops-maint attended e la finestra automatica."
   for line in "${STEPS[@]}"; do
     step_field "$line"; st=$(planned_status "$S_ID")
     case $st in profilo) st="escluso (profilo base)" ;; da-fare) st="da fare" ;; esac
@@ -541,8 +546,15 @@ done
 
 update_progress 1
 st_meta_set completato "$(now)"
-say ""; say "CONFIGURAZIONE INIZIALE COMPLETATA: avanzamento.md riporta STATO: COMPLETATO (commit)."
-say "$(date -u '+%F %T')  COMPLETATA" >> "$RUNDIR/riepilogo.log"
+say ""
+if [ -n "$(esclusi_dichiarati)" ]; then
+  say "COLLAUDO LOCALE COMPLETATO CON ESCLUSIONI ($(esclusi_dichiarati)): VALIDAZIONE PER PRODUZIONE INCOMPLETA."
+  say "avanzamento.md: STATO: COMPLETATO CON ESCLUSIONI (commit). Le voci escluse restano da completare per la produzione."
+  say "$(date -u '+%F %T')  COLLAUDO LOCALE COMPLETATO CON ESCLUSIONI ($(esclusi_dichiarati)); validazione per produzione incompleta" >> "$RUNDIR/riepilogo.log"
+else
+  say "CONFIGURAZIONE INIZIALE COMPLETATA SENZA ESCLUSIONI: avanzamento.md riporta STATO: COMPLETATO (commit)."
+  say "$(date -u '+%F %T')  COMPLETATA senza esclusioni" >> "$RUNDIR/riepilogo.log"
+fi
 say "L'agente completa ora la documentazione della macchina (overview, STATUS, CHANGELOG, decisioni) e passa alla gestione ordinaria."
 finish_summary
 exit 0

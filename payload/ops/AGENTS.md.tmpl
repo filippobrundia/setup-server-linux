@@ -18,7 +18,8 @@ non ha ancora completato la base: segui "Esecuzione unica" in `docs/bootstrap/co
 In breve: `bash docs/bootstrap/rileva-parametri.sh`, **una sola** richiesta a @@OWNER@@ dei dati mancanti (profilo,
 esclusioni, copia remota, monitoraggio), `host.conf` compilato con commit, `ops-installa --piano` pulito; poi
 @@OWNER@@ lancia da una sessione SSH `sudo ops-installa` (una password per esecuzione) e tu leggi gli esiti in
-`/var/log/ops-installa/` (senza sudo, senza fargli copiare output). `ops-installa` aggiorna l'avanzamento da solo. Gli avvisi di
+`/var/log/ops-installa/` (senza sudo, senza fargli copiare output). `ops-installa` aggiorna l'avanzamento da solo.
+Con esclusioni l'esito è "collaudo locale completato con esclusioni", **non** la validazione per produzione. Gli avvisi di
 `quick-check` sulle parti non ancora configurate sono attesi. Si passa alla gestione ordinaria solo quando il
 collaudo finale (sezione 12) è superato e il file riporta `STATO: COMPLETATO`.
 
