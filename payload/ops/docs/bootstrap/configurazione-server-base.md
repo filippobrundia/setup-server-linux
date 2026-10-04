@@ -20,6 +20,13 @@ ereditato" indicano cosa verificare perché sul server di origine era un limite 
 Già fatto da `bootstrap.sh`: `/srv/ops` con regole, documenti e script; Node.js 22 (NodeSource) e Claude Code per
 l'amministratore; adattatori nella home; componenti di manutenzione installati **senza** unit abilitate.
 
+**Script dei passi** (`docs/bootstrap/passo*.sh`, collaudati su Ubuntu 26.04): eseguono i passi 3, 6–10 e le verifiche
+del 12 con PRECHECK → BACKUP → MODIFICA → VERIFY, manifest in `/var/lib/ops-bootstrap/` e `--rollback`. Li lancia
+l'amministratore in un **terminale vero** (SSH o console; non la modalità `!` di Claude Code), prima con `--dry-run`:
+`sudo bash /srv/ops/docs/bootstrap/<script> --dry-run`, poi senza opzioni. Leggono i parametri da `host.conf` (riga per
+riga, senza eseguirlo) e da `/etc/os-release`: si fermano se un parametro necessario manca. Coprono la base **senza
+servizi**: dati, esclusioni e snapshot dei servizi restano passi manuali.
+
 ---
 
 ## 0. Parametri della macchina
@@ -32,7 +39,7 @@ dispositivi, UUID, indirizzi e percorsi fisici non si copiano da altri server.
 | hostname, utente amministratore | `HOST`, `ADMIN` (già compilati) | `hostname`, `bootstrap.sh` |
 | rete locale ammessa | `LAN_CIDR` | router / `ip route` |
 | interfaccia, IP/prefisso, gateway, DNS | `docs/network.md` | `ip -br addr`, `ip route`, `resolvectl status` |
-| partizione per `/srv`, disco dati e suo punto di montaggio (`DATA_MOUNT`) | `MOUNTS`, `docs/overview.md` | `lsblk -f` |
+| partizione per `/srv`, disco dati e suo punto di montaggio | `MOUNTS`, `DATA_MOUNT`, `docs/overview.md` | `lsblk -f` |
 | repository Borg locale (`<DATA_MOUNT>/dati/backup/borg-repo-plain`) | `BORG_REPO` (a sezione 10 completata) | derivato |
 | destinazione della copia remota | `OFFSITE` (solo descrittiva) | fornita dal proprietario; credenziali mai qui |
 | servizi e container attesi | `SERVICES`, `CONTAINERS` | sezioni 7–8 |
@@ -80,6 +87,7 @@ Se la macchina ha un solo disco, `/srv` e `DATA_MOUNT` sono partizioni o cartell
 
 - **Controllo:** `ls -ld <DATA_MOUNT>/dati <DATA_MOUNT>/dati/backup`.
 - **Se manca:** `sudo install -d -m 0750 <DATA_MOUNT>/dati/backup <DATA_MOUNT>/dati/backup/database`.
+  Script: `passo3-cartelle.sh` (si ferma se `DATA_MOUNT` è in `/etc/fstab` ma non montato).
 - **Verifica:** stesso controllo.
 
 ## 4. Repository `/srv/ops`
@@ -97,9 +105,9 @@ altre regole di `AGENTS.md`.
 
 - **Controllo:** `id <ADMIN>`; `sudo grep -rn NOPASSWD /etc/sudoers /etc/sudoers.d`;
   `getent passwd | awk -F: '$7 !~ /(nologin|false)$/'`.
-- **Stato atteso:** utenti con shell solo `root` e l'amministratore; amministratore nei gruppi `sudo`, `adm` (e
-  `docker` dopo la sezione 8); sudo con password, nessun `NOPASSWD`; nessuna modalità degli agenti che salti le
-  approvazioni.
+- **Stato atteso:** utenti con shell solo `root` e l'amministratore; amministratore nei gruppi `sudo`, `adm`, **mai**
+  in `docker` (decisione ereditata 2026-10-04: equivale a root senza password); sudo con password, nessun
+  `NOPASSWD`; nessuna modalità degli agenti che salti le approvazioni.
 - **Se manca:** 🔌 `sudo usermod -aG adm <ADMIN>`; rimuovere un `NOPASSWD` solo dopo aver verificato che `sudo`
   con password funziona.
 - **Verifica:** ripetere il controllo.
@@ -117,11 +125,18 @@ altre regole di `AGENTS.md`.
 | `sysstat` | storico delle prestazioni |
 
 - **Controllo:** `dpkg-query -W -f='${Status} ${Package}\n' <pacchetti> 2>&1 | grep -v '^install ok installed'`.
-- **Se manca:** `apt-get -s install <mancanti>` (nessuna rimozione), poi
-  `sudo apt-get -o DPkg::Lock::Timeout=600 install <mancanti>`.
-- **Verifica:** il controllo non stampa nulla.
+- **Se manca:** `apt-get -s install <mancanti>` (nessuna rimozione); se `borgmatic` è tra i mancanti, **prima**
+  `sudo systemctl mask borgmatic.timer` (il postinst di borgmatic 2.0 abilita e avvia il timer: senza maschera
+  partirebbe un secondo scheduler prima della sezione 10); poi
+  `sudo apt-get -o DPkg::Lock::Timeout=600 install <mancanti>`; infine `sudo systemctl unmask borgmatic.timer` e
+  `sudo systemctl disable borgmatic.timer` (timer mai partito). Un mascheramento preesistente non va tolto.
+  Script: `passo6-pacchetti.sh`.
+- **Verifica:** il controllo non stampa nulla; `systemctl is-enabled borgmatic.timer` → `disabled`, mai avviato.
 
 ## 7. Impostazioni di sistema
+
+Script per 7.2–7.7: `passo7-impostazioni.sh` (verifica 7.2 e 7.4–7.7, attiva UFW con ripristino automatico armato,
+`--confirm` dopo un nuovo login SSH). Richiede `LAN_CIDR`: la 7.1 va completata prima.
 
 ### 7.1 Rete
 - **Controllo:** `ip -br addr`; `sudo cat /etc/netplan/*.yaml`.
@@ -154,7 +169,8 @@ altre regole di `AGENTS.md`.
 
 ### 7.5 Orario
 - **Controllo:** `timedatectl show -p Timezone -p NTPSynchronized`.
-- **Stato atteso:** `Etc/UTC`, `NTPSynchronized=yes` (`systemd-timesyncd`).
+- **Stato atteso:** `Etc/UTC`, `NTPSynchronized=yes` (`systemd-timesyncd` su 24.04; su Ubuntu 26.04 il client
+  predefinito è **chrony**, che va mantenuto: vedi `docs/system.md`).
 - **Se manca:** `sudo timedatectl set-timezone Etc/UTC`; `sudo timedatectl set-ntp true`.
 
 ### 7.6 Aggiornamenti automatici
@@ -168,8 +184,9 @@ altre regole di `AGENTS.md`.
 - **Stato atteso:** journald di default e persistente (`/var/log/journal`); job cron con log in `/var/log/<nome>.log`;
   spazio controllato da `quick-check` (attenzione 80 %, errore 90 %).
 - **Se manca:** `sudo mkdir -p /var/log/journal && sudo systemctl restart systemd-journald`.
-- **Controllo ereditato:** la rotazione dei log dei job cron (`/etc/logrotate.d/`) sul server di origine non era
-  configurata per borgmatic e per la copia remota; verificare dopo la sezione 10 e registrare se manca.
+- **Rotazione dei log dei job cron:** per borgmatic il modello `maint/templates/logrotate-borgmatic` (sezione 10.2).
+  **Controllo ereditato:** sul server di origine mancava anche per la copia remota; verificare dopo la sezione 10.3
+  e registrare se manca.
 
 ## 8. Convenzioni per ospitare servizi
 
@@ -178,9 +195,14 @@ altre regole di `AGENTS.md`.
 - **Stato atteso:** Docker CE dal repository ufficiale `download.docker.com`; `daemon.json` =
   `maint/templates/docker-daemon.json` (data-root `/srv/docker`, log `json-file` 100m × 3, `overlay2`).
 - **Se manca:** repository e pacchetti secondo la procedura ufficiale Docker per Ubuntu; `daemon.json` **prima**
-  del primo avvio del motore; `sudo usermod -aG docker <ADMIN>` (equivale a root). Aggiungere `docker` a
-  `SERVICES` e `docker.service` a `REQUIRED_UNITS` in `/etc/ops-maint.conf`.
-- **Verifica:** `docker info --format '{{.DockerRootDir}} {{.LoggingDriver}}'` → `/srv/docker json-file`.
+  del primo avvio del motore: il postinst di `docker-ce` avvia `docker.socket`/`docker.service`, quindi si
+  mascherano entrambi prima dell'installazione, si valida `sudo dockerd --validate --config-file
+  /etc/docker/daemon.json`, poi si smascherano e si avviano. **Nessun utente nel gruppo `docker`** (sezione 5): i
+  comandi docker si danno con `sudo`. Aggiungere `docker` a `SERVICES` e `docker.service` a `REQUIRED_UNITS` in
+  `/etc/ops-maint.conf`, modificando **solo la riga di assegnazione** `REQUIRED_UNITS=` (mai un grep sull'intero
+  file, che trova anche i commenti) come unità separata da spazio. Script: `passo8-docker.sh`.
+- **Verifica:** `sudo docker info --format '{{.DockerRootDir}} {{.LoggingDriver}}'` → `/srv/docker json-file`;
+  `getent group docker` senza membri; `sudo /usr/local/sbin/ops-maint origins` accetta i parametri riletti.
 
 ### 8.2 Regole per ogni servizio
 - cartella `/srv/docker/<servizio>/` con `docker-compose.yml` (nessun container creato con `docker run` a mano);
@@ -205,7 +227,8 @@ soddisfatto (`docs/runbooks/manutenzione.md`, tabella "Installazione e attivazio
 - **Se manca:** `sudo /srv/ops/maint/install-maint install --admin <ADMIN>` (ripetibile).
 - **Parametri:** `REQUIRED_UNITS` (servizi essenziali abilitati all'avvio), `EXTRA_ORIGINS_RE`,
   `EXTRA_BUSY_ARG_RE` in `/etc/ops-maint.conf` (sudo, con commit della descrizione in `docs/system.md`).
-- **Verifica:** `sudo DRY_RUN=1 /usr/local/sbin/ops-maint window` senza errori di parametri.
+- **Verifica:** `sudo DRY_RUN=1 /usr/local/sbin/ops-maint window` senza errori di parametri. Script:
+  `passo9-manutenzione.sh` (`REQUIRED_UNITS` dalle unità di `SERVICES` in `host.conf`, nessuna unit abilitata).
 - **Attivazione:** `enable postboot` prima del collaudo (sezione 12, punto 4); `enable window` e `enable
   cli-update` nel collaudo finale.
 
@@ -222,13 +245,18 @@ soddisfatto (`docs/runbooks/manutenzione.md`, tabella "Installazione e attivazio
 - **Se manca:** ⚠️ `sudo borg init --encryption=none <BORG_REPO>` solo su cartella vuota; configurazione in
   `/etc/borgmatic/config.yaml`; `sudo install -o root -g root -m 0750 maint/templates/run-borgmatic.sh
   /usr/local/bin/run-borgmatic.sh`; `sudo borgmatic config validate`.
-- **Verifica:** `config validate` pulito; `BORG_REPO` in `host.conf`.
+- **Verifica:** `config validate` pulito; `BORG_REPO` in `host.conf`. Script (base senza servizi):
+  `passo10-backup.sh` (repository, configurazione, primo backup, cron, prova di ripristino).
 
 ### 10.2 Pianificazione
 - **Stato atteso:** `/etc/cron.d/borgmatic` = `maint/templates/cron-borgmatic` (03:00); `borgmatic.timer`
-  disabilitato.
-- **Se manca:** copiare il modello; `sudo systemctl disable --now borgmatic.timer`.
-- **Verifica:** dopo la prima notte `quick-check` segnala l'archivio recente e lo scheduler unico.
+  disabilitato e mai partito (mascherato durante l'installazione, sezione 6); `/etc/logrotate.d/borgmatic` =
+  `maint/templates/logrotate-borgmatic` (`delaycompress`: dopo la rotazione `quick-check` legge l'archivio dal log
+  precedente).
+- **Se manca:** copiare i modelli; `sudo systemctl disable --now borgmatic.timer`.
+- **Verifica:** dopo la prima notte `quick-check` segnala l'archivio recente e lo scheduler unico. Script:
+  `passo10b-rotazione-verifica.sh` (rotazione reale forzata, `quick-check` trova l'archivio, secondo backup e
+  ripristino).
 
 ### 10.3 Copia remota
 - **Stato atteso:** `/etc/cron.d/offsite-sync` da `maint/templates/cron-offsite-sync` (04:00, `rclone sync`),
@@ -252,6 +280,7 @@ soddisfatto (`docs/runbooks/manutenzione.md`, tabella "Installazione e attivazio
 1. **Backup presidiato:** `sudo /usr/local/bin/run-borgmatic.sh`; `sudo borg list <BORG_REPO>`; log senza errori.
 2. **Prova di ripristino** (in una cartella temporanea poi eliminata): `borg extract` di `/srv/ops` → identico
    (`diff -r`) e `git fsck` ok; configurazioni estratte identiche; database con `PRAGMA integrity_check` = `ok`.
+   Script per il ripristino di `/srv/ops`, UFW, porte e montaggi (12.2, 12.5, prima della 12.4): `passo12-verifiche.sh`.
    **Controllo ereditato:** il ripristino completo dalla copia remota non era mai stato provato sul server di origine:
    se non lo si prova qui, registrarlo in `STATUS.md`.
 3. **Copia remota:** `rclone check --size-only` con 0 differenze.

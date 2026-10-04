@@ -4,10 +4,12 @@ Prepara un **Ubuntu Server LTS appena installato** per l'amministrazione con age
 sul server di origine: regole (`AGENTS.md`), documenti, checklist, script di controllo, manutenzione e monitoraggio.
 Versione: vedi `VERSION`.
 
-> **Stato: collaudato solo in container.** Le prove automatiche (sezione "Collaudo") girano in un container
-> `ubuntu:24.04` senza systemd. **Non** sono ancora verificati su Ubuntu Server reale: systemd e attivazione delle
-> unit, login di Claude Code e primo avvio dell'agente, riavvio presidiato, integrazione con Healthchecks,
-> `install.sh`. Non usare in produzione prima di quel collaudo.
+> **Stato: pre-release, non pronta per la produzione.** La 0.3.0 è stata collaudata su una VM di laboratorio con
+> **Ubuntu Server 26.04.1 LTS** (Hyper-V), con esito "collaudo locale completato con esclusioni"; la 0.4.0 integra le
+> correzioni emerse da quel collaudo ed è provata in container (`ubuntu:24.04` e `ubuntu:26.04`, senza systemd).
+> Da provare prima della produzione: installazione da zero della 0.4.0 su una VM pulita, copia remota con ripristino,
+> `--gate` con uscita 0, rete stabile, riavvio con `ops-maint attended` e `ops-postboot`, timer automatici
+> (sezione "Collaudo").
 
 ## Installazione (release identificata, integrità verificata)
 
@@ -15,23 +17,42 @@ Sulla macchina nuova, come **utente amministratore normale** creato dall'install
 non root), con l'impronta SHA-256 riportata nella pagina della release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.3.0/install.sh \
+curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.4.0/install.sh \
   | bash -s -- --sha256 <IMPRONTA> --check   # solo controllo: piano e conflitti, nessuna modifica
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.3.0/install.sh \
+curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.4.0/install.sh \
   | bash -s -- --sha256 <IMPRONTA>           # esecuzione (ripetibile)
 ```
 
-`install.sh` rifiuta root, scarica l'archivio della release `v0.3.0`, lo confronta con `SHA256SUMS` della release e
-con l'impronta passata a `--sha256`, lo estrae in `~/setup-server-linux-0.3.0` e avvia
+`install.sh` rifiuta root, scarica l'archivio della release `v0.4.0`, lo confronta con `SHA256SUMS` della release e
+con l'impronta passata a `--sha256`, lo estrae in `~/setup-server-linux-0.4.0` e avvia
 `sudo bootstrap.sh --admin <utente>` (sudo chiede la password). Claude Code e il suo login restano nell'account
 dell'amministratore. Opzione: `--owner "Nome"` (nome del proprietario usato nelle regole; di default il primo nome
 del campo GECOS).
 
-Alternativa manuale: scaricare `setup-server-linux-0.3.0.tar.gz` e `SHA256SUMS` dalla release,
+Alternativa manuale: scaricare `setup-server-linux-0.4.0.tar.gz` e `SHA256SUMS` dalla release,
 `sha256sum -c SHA256SUMS`, estrarre e lanciare `sudo ./bootstrap.sh --admin "$USER" [--check]`.
 
 Poi, in un **nuovo** terminale: `claude` → completare il login personale. L'agente parte in `/srv/ops`, trova
 `docs/bootstrap/avanzamento.md` con `STATO: IN CORSO` e prosegue con la checklist secondo `AGENTS.md`.
+
+Sistemi: Ubuntu Server LTS; collaudo su macchina reale con **Ubuntu 26.04** (VM), prove automatiche in container
+24.04 e 26.04. Su 26.04 il client NTP predefinito è chrony (accettato dalla checklist).
+
+## Novità della 0.4.0 (correzioni dal collaudo della VM, 2026-10-04)
+
+| Correzione | Dove |
+|---|---|
+| VERIFY delle unit `ops-*` senza filtro di `systemctl` (su 26.04 un filtro senza corrispondenze esce con 1 e fermava il bootstrap prima della Knowledge Base) | `bootstrap.sh` |
+| `kb status` letto in una variabile con controllo del codice di uscita (niente `\| head`, niente "Broken pipe"); se fallisce la fase KB non è completata (esito 4) | `bootstrap.sh` |
+| `quick-check`: Docker senza gruppo `docker` (OK se nessun container previsto e servizio attivo); archivio Borg letto dal log ruotato | `bin/quick-check` |
+| Rotazione di `/var/log/borgmatic.log` (`delaycompress`) | `maint/templates/logrotate-borgmatic` |
+| Nessun amministratore nel gruppo `docker` (accesso al socket = root senza password) | checklist 5 e 8.1, `docs/decisions.md` |
+| `borgmatic.timer` mascherato durante l'installazione (il postinst di borgmatic 2.0 lo avvia); Docker mascherato finché `daemon.json` non è validato; `REQUIRED_UNITS` modificato solo sulla riga di assegnazione; orario con chrony | checklist 6, 7.5, 8.1, 10.2 |
+| Sudo in un terminale vero, non con `! sudo` di Claude Code | `AGENTS.md` |
+| Script dei passi 3, 6–10 e 12, parametrizzati con `host.conf` (nuova chiave `DATA_MOUNT`) e `/etc/os-release` | `docs/bootstrap/passo*.sh` |
+
+Le scelte della VM di laboratorio (reti private al posto di `LAN_CIDR`, `"ip": "127.0.0.1"` in `daemon.json`,
+`source_directories_must_exist`, layout a disco unico, valori fissi di `REQUIRED_UNITS`) **non** sono trasferite.
 
 ## Knowledge Base condivisa tra server
 
@@ -80,7 +101,7 @@ lo richiede: `npm view @anthropic-ai/claude-code@stable version engines` → `2.
 | crea `/srv/ops` (repository Git) con regole, adattatori, documenti, checklist, script, `host.conf` | toccare rete, SSH, firewall, utenti, hostname |
 | installa Claude Code (npm, canale `stable`, autoaggiornamento disattivato) per l'amministratore | attivare timer o servizi: tutte le unit `ops-*` restano disabilitate |
 | aggiunge nella home un blocco marcato in `~/.bash_aliases`, `~/CLAUDE.md` di solo rimando, le impostazioni di Claude | copiare istruzioni nella home (l'unica fonte è `/srv/ops/AGENTS.md`) |
-| installa i file della manutenzione con `/srv/ops/maint/install-maint install` | installare applicazioni, Docker, backup, agenti applicativi |
+| installa i file della manutenzione con `/srv/ops/maint/install-maint install` | installare applicazioni, Docker, backup, agenti applicativi (Docker e backup li installano gli script dei passi, lanciati dall'amministratore durante la checklist) |
 
 Prima di cambiare qualcosa controlla tutto; al primo **conflitto** (file esistente diverso e non installato dal
 pacchetto, `/srv/ops` estranea, impostazioni incompatibili) si ferma senza modifiche. Riesecuzioni: i file
@@ -95,7 +116,8 @@ identici si saltano, quelli del pacchetto non modificati si aggiornano, quelli c
 | `install.sh` | punto di ingresso pubblico: scarica la release, verifica l'integrità, avvia `bootstrap.sh` |
 | `bootstrap.sh` | preparazione della macchina (avviato con sudo da `install.sh`) |
 | `payload/ops/` | ciò che diventa `/srv/ops` (`*.tmpl` completati con hostname, utente, proprietario, data) |
-| `payload/ops/maint/` | `ops-maint` (script root della finestra), unit `ops-*`, `install-maint`, modelli di backup/cron/Docker |
+| `payload/ops/maint/` | `ops-maint` (script root della finestra), unit `ops-*`, `install-maint`, modelli di backup/cron/logrotate/Docker |
+| `payload/ops/docs/bootstrap/passo*.sh` | script dei passi della checklist (PRECHECK, BACKUP, MODIFICA, VERIFY, `--dry-run`, `--rollback`), lanciati con sudo dall'amministratore |
 | `payload/home/` | adattatori per la home dell'amministratore |
 | `payload/ops/bin/kb`, `payload/ops/kb.conf.tmpl` | strumento e configurazione della Knowledge Base condivisa |
 | `tests/kb-scenario.sh` | collaudo dello strumento kb con un repository remoto fittizio e due copie |
@@ -110,23 +132,35 @@ verificato: va estratto con sudo, riletto e parametrizzato prima di includerlo).
 
 ## Collaudo
 
-**Fatto — in container.** `tests/run-container-test.sh` (Docker, `ubuntu:24.04` usa e getta, senza systemd):
-**72/72 prove superate** con la versione 0.3.0, comprese quelle della Knowledge Base condivisa (su un repository remoto
-fittizio): primo recupero dal bootstrap, sincronizzazione ripetuta senza modifiche, regole in `AGENTS.md`, esito 4 e
-messaggio esplicito senza accesso al repository, migrazione di una copia 0.2.0, nessun passo operativo con
-`--knowledge-base-only`, e lo scenario `tests/kb-scenario.sh` (34/34: due copie indipendenti, pubblicazione e recupero,
-pubblicazioni concorrenti con push respinto e ritentato, rifiuto di modifiche, cancellazioni e push forzati, esclusione
-di chiavi, token, indirizzi privati ed email, record correttivi, funzionamento senza rete).
-**Fatto — sul server di origine** (fisico, Ubuntu 24.04): stesso scenario `kb` (34/34, repository locale) e prove sul
-repository GitHub reale con deploy key, due copie temporanee e record fittizi su un ramo di collaudo poi rimosso
-(pubblicazione concorrente con respingimento e nuovo tentativo, recupero reciproco, modifica, cancellazione e force push
-respinti). `install.sh` non è stato eseguito in container.
+**Fatto — in container (0.4.0).** `tests/run-container-test.sh` (Docker, container usa e getta senza systemd;
+`IMAGE=ubuntu:26.04` per la 26.04): **124/124 prove superate sia su `ubuntu:24.04` sia su `ubuntu:26.04`**. Comprendono le prove
+della 0.3.0 (distribuzione, idempotenza, conflitti, Knowledge Base condivisa su un repository remoto fittizio, scenario
+`tests/kb-scenario.sh` 34/34) e i casi nuovi: A1 con un `systemctl` simulato come quello di 26.04 (difetto della 0.3.0
+riprodotto, bootstrap con esito 0, errore reale con esito 3), A2 con `kb status` di 200000 righe e con errore (esito 4),
+`quick-check` con log corrente, ruotato, senza archivio e con errori e con Docker senza gruppo `docker`, rotazione
+reale del modello logrotate, lettore di `host.conf` (mai eseguito, valori non validi rifiutati), passo 3 completo
+(dry-run, creazione, ripetizione, disco in fstab non montato, rollback), configurazione del passo 10 validata da
+borgmatic reale, derivazione di `REQUIRED_UNITS` del passo 9, arresto degli script senza parametri, shellcheck.
+Gli script dei passi 6, 7, 8, 10, 10b e 12 richiedono systemd, APT e rete reali: in container solo controlli
+parziali.
 
-**Da provare su una VM o macchina Ubuntu Server pulita, con systemd, prima dell'uso in produzione:**
-1. `bootstrap.sh` su Ubuntu Server reale (pacchetti di `ubuntu-server` già presenti, `unattended-upgrades` attivo
-   al primo avvio: attesa dei blocchi APT);
-2. `install-maint install` con systemd: `daemon-reload`, tmpfiles, nessuna unit abilitata;
-3. login di Claude Code e primo avvio dell'agente: riconoscimento della configurazione incompleta;
-4. `install-maint enable postboot|window|cli-update` con i prerequisiti, `cli-update --verify` dopo il login;
-5. riavvio presidiato (`ops-maint attended`) e `ops-postboot`;
-6. `bin/healthchecks setup` e prova dell'allarme con un controllo reale.
+**Fatto — VM di laboratorio (0.3.0 con le correzioni di `bootstrap.sh`, Ubuntu Server 26.04.1, Hyper-V,
+2026-10-02/04):** bootstrap, passi 1–10 (backup locale e ripristino con zero differenze), Healthchecks con allarme
+reale, verifiche 12.2 locale, 12.4 (riavvio normale), 12.5–12.7. Esclusi: copia remota (10.3, 11.1, 12.2 da remoto,
+12.3), rete stabile (7.1). Gli script dei passi 0.4.0 derivano da quelli della VM, parametrizzati: la versione
+parametrizzata non è ancora stata eseguita su una macchina reale.
+**Fatto — sul server di origine** (fisico, Ubuntu 24.04): scenario `kb` e prove sul repository GitHub reale (0.3.0).
+
+**Da provare su una VM pulita con Ubuntu Server 26.04 (installazione da zero della 0.4.0, senza correzioni manuali):**
+1. `install.sh --check`, poi installazione: `bootstrap.sh` con esito 0 senza `--knowledge-base-only`, riepilogo KB
+   senza "Broken pipe";
+2. passo 6: `borgmatic.timer` mai avviato; passo 7.5 con chrony;
+3. passo 8: Docker avviato solo dopo la validazione di `daemon.json`, amministratore fuori dal gruppo `docker`,
+   `quick-check` senza ERRORE su Docker, `docker.service` in `REQUIRED_UNITS`;
+4. passo 10: `/etc/logrotate.d/borgmatic` dal modello, `quick-check` trova l'archivio dopo una rotazione;
+5. spegnimento: `journalctl -b -1 -u finalrd` (su 26.04 `finalrd.service` usciva con 73, senza conseguenze osservate);
+6. agenti: indicazioni su sudo senza `! sudo`.
+
+**Per la produzione servono inoltre:** copia remota con ripristino provato (10.3, 12.2 da remoto, 12.3),
+`quick-check --gate` con uscita 0 (11.1), rete stabile (7.1), `ops-maint attended` con `ops-postboot`, attivazione e
+prima esecuzione dei timer (12.8), `install.sh` dalla release pubblicata.

@@ -65,7 +65,14 @@ fi
 if [ -n "$CONTAINERS" ] || command -v docker >/dev/null; then
   echo "Docker"
   if ! docker ps >/dev/null 2>&1; then
-    fail "Docker non raggiungibile da $(id -un)"
+    # amministratore senza gruppo docker (regola generale, docs/decisions.md): senza container previsti basta
+    # il servizio attivo; con container previsti il controllo non è possibile e resta un errore
+    if [ -z "$CONTAINERS" ] && [ -S /run/docker.sock ] && [ ! -w /run/docker.sock ]; then
+      systemctl is-active --quiet docker && ok "Docker attivo; nessun container previsto (elenco non leggibile senza privilegi)" \
+        || fail "Docker non attivo"
+    else
+      fail "Docker non raggiungibile da $(id -un)"
+    fi
   else
     running=$(docker ps --format '{{.Names}}' | sort | tr '\n' ' ')
     missing=""; for c in $CONTAINERS; do docker ps --format '{{.Names}}' | grep -qx "$c" || missing="$missing $c"; done
@@ -99,13 +106,16 @@ else
       fail "ultimo snapshot SQLite non riuscito (dettagli: sudo cat ${SNAPSHOT_DIR:-<cartella degli snapshot>}/STATUS)"
     fi
   fi
-  arch_line=$(grep -n 'Creating archive at' "$BORG_LOG" 2>/dev/null | tail -1)
+  # dopo la rotazione notturna (logrotate, delaycompress) l'ultimo archivio può stare nel log precedente
+  blog=$BORG_LOG
+  grep -q 'Creating archive at' "$blog" 2>/dev/null || { [ -r "$BORG_LOG.1" ] && blog=$BORG_LOG.1; }
+  arch_line=$(grep -n 'Creating archive at' "$blog" 2>/dev/null | tail -1)
   if [ -z "$arch_line" ]; then
     fail "nessun archivio Borg trovato nel log ($BORG_LOG)"
   else
     lineno=${arch_line%%:*}
     arch=$(grep -oE "$HOST-[0-9T:.-]+" <<< "$arch_line")
-    after=$(tail -n +"$lineno" "$BORG_LOG")
+    after=$(tail -n +"$lineno" "$blog")
     if grep -q 'Successfully ran configuration file' <<< "$after" && ! grep -qE 'CRITICAL|An error occurred' <<< "$after"; then
       age_check "archivio Borg $arch" "$(date -d "$(sed -E "s/^$HOST-//; s/T/ /; s/\..*//" <<< "$arch")" +%s)"
     else

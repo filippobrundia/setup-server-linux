@@ -1,0 +1,14 @@
+# /etc/logrotate.d/borgmatic — log del backup notturno (modello maint/templates/logrotate-borgmatic, sezione 10.2).
+# delaycompress: il log precedente resta non compresso, perché quick-check vi cerca l'ultimo archivio subito
+# dopo la rotazione (logrotate.timer intorno alle 00:00, backup alle 03:00). "su root adm" come in
+# /etc/logrotate.conf, così il file funziona anche da solo (/var/log è scrivibile dal gruppo syslog).
+/var/log/borgmatic.log {
+    su root adm
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 root root
+}

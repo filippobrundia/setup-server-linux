@@ -99,7 +99,7 @@ fi
 for f in payload/ops/AGENTS.md.tmpl payload/ops/maint/install-maint payload/ops/maint/ops-maint payload/home/bash_aliases.block; do
   [ -f "$PKG/$f" ] || die "pacchetto incompleto: manca $f"
 done
-for f in "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/install-maint"; do
+for f in "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/install-maint" "$PKG"/payload/ops/docs/bootstrap/*.sh; do
   bash -n "$f" || die "errore di sintassi in $f"
 done
 
@@ -292,7 +292,7 @@ KB_OK=0
 kb_setup() {
   log "== Knowledge Base condivisa ($KB_REMOTE, server '$KB_ID')"
   command -v ssh-keygen >/dev/null || { log "  ssh-keygen assente (openssh-client)"; return 1; }
-  local key="$AHOME/.ssh/kb_deploy" kh="$AHOME/.ssh/known_hosts" rc
+  local key="$AHOME/.ssh/kb_deploy" kh="$AHOME/.ssh/known_hosts" rc st
   as_admin install -d -m 0700 "$AHOME/.ssh"
   if [ ! -f "$key" ]; then as_admin ssh-keygen -q -t ed25519 -N '' -C "kb-deploy $KB_ID" -f "$key"; log "  deploy key del server creata: $key"; fi
   if [[ "$KB_REMOTE" == git@github.com:* || "$KB_REMOTE" == ssh://git@github.com/* ]] && ! as_admin ssh-keygen -F github.com -f "$kh" >/dev/null 2>&1; then
@@ -306,7 +306,10 @@ kb_setup() {
   fi
   if [ -d "$OPS/knowledge-base/.git" ]; then as_admin "$OPS/bin/kb" sync; rc=$?; else as_admin "$OPS/bin/kb" init; rc=$?; fi
   if [ "$rc" = 0 ] && [ -d "$OPS/knowledge-base/.git" ]; then
-    KB_OK=1; log "  Knowledge Base disponibile: $(as_admin "$OPS/bin/kb" status | head -1)"
+    # output completo in una variabile (niente "| head": chiudeva la pipe in anticipo) e codice di uscita controllato
+    st=$(as_admin "$OPS/bin/kb" status) || {
+      log "  ATTENZIONE: kb status non riuscito (rc=$?) dopo sync/init: Knowledge Base NON verificata"; return 1; }
+    KB_OK=1; log "  Knowledge Base disponibile: ${st%%$'\n'*}"
     if as_admin sh -c 'command -v crontab' >/dev/null; then as_admin "$OPS/bin/kb" schedule on | sed 's/^/  /' | tee -a "$LOG"
     else log "  ATTENZIONE: cron assente, sincronizzazione periodica non configurata (usare kb sync a inizio lavoro)"; fi
   else
@@ -377,8 +380,14 @@ as_admin claude --version >/dev/null 2>&1 && log "  claude: $(as_admin claude --
 as_admin bash -ic 'type -t claude' 2>/dev/null | grep -qx function && log "  funzione claude attiva nelle shell interattive" \
   || log "  ATTENZIONE: la funzione claude non risulta nelle shell interattive (controllare ~/.bashrc)"
 if [ -d /run/systemd/system ]; then
-  en=$(systemctl list-unit-files 'ops-*' --state=enabled --no-legend 2>/dev/null | awk '{print $1}' | paste -sd' ')
-  [ -z "$en" ] && log "  nessuna unit ops-* abilitata" || log "  unit ops-* abilitate: $en"
+  # elenco completo senza filtri: con un filtro senza corrispondenze systemctl esce con 1 (con pipefail fermava il
+  # bootstrap); senza filtri un codice diverso da 0 è un errore reale. Il filtro ops-*/enabled lo applica awk.
+  if units=$(systemctl list-unit-files --no-legend --no-pager); then
+    en=$(awk '$1 ~ /^ops-/ && $2 == "enabled" {print $1}' <<< "$units" | paste -sd' ')
+    [ -z "$en" ] && log "  nessuna unit ops-* abilitata" || log "  unit ops-* abilitate: $en"
+  else
+    log "  ERRORE: systemctl list-unit-files non riuscito (rc=$?): stato delle unit ops-* non verificabile"; v_ok=0
+  fi
 fi
 [ "$v_ok" = 1 ] || die "verifica finale non superata (vedi sopra)"
 if [ "$KB_OK" != 1 ]; then

@@ -85,10 +85,11 @@ chiedergli come risolvere tecnicamente il problema.
 - **Non fidarti ciecamente di questi documenti**: sono snapshot datati; verifica il sistema reale.
 - **Decisioni già prese** (`docs/decisions.md`): non riproporle, salvo fatti nuovi rilevanti (segnalali).
 - **Segreti**: mai in questo repository né negli output; indicare solo *dove* si trovano, mascherare.
-- **Sudo** richiede password: i comandi `sudo` li lancia @@OWNER@@ (`! sudo …` o in una sessione SSH), l'agente
-  prepara uno script con controlli e rollback e gli chiede solo quel passaggio. Nessun sudo senza password
-  generalizzato, nessuna modalità globale che salta le approvazioni degli strumenti; i lavori programmati
-  girano con i privilegi minimi (codice eseguito da root solo in `/usr/local/sbin`, di proprietà di root).
+- **Sudo** richiede password: i comandi `sudo` li lancia @@OWNER@@ in un terminale vero (sessione SSH o console,
+  incollando poi l'output all'agente; la modalità `!` di Claude Code non ha un terminale e sudo non può chiedere la
+  password), l'agente prepara uno script con controlli e rollback e gli chiede solo quel passaggio. Nessun sudo
+  senza password generalizzato, nessuna modalità globale che salta le approvazioni degli strumenti; i lavori
+  programmati girano con i privilegi minimi (codice eseguito da root solo in `/usr/local/sbin`, di proprietà di root).
 - **APT**: rispettare i blocchi (`DPkg::Lock::Timeout`), mai aggirarli; non sovrapporsi ai backup
   (03:00–04:10 UTC) né agli aggiornamenti automatici (06:00–07:00 UTC circa).
 - **File bind-montati nei container**: non sovrascriverli con rename atomico — vedi

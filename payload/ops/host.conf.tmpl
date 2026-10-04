@@ -1,11 +1,13 @@
 # /srv/ops/host.conf — parametri della macchina per gli script di /srv/ops/bin (utente amministratore).
-# Letto da quick-check, heartbeat, healthchecks, cli-update. Nessuna credenziale qui dentro.
+# Letto da quick-check, heartbeat, healthchecks, cli-update; gli script dei passi (docs/bootstrap/passo*.sh) lo
+# leggono riga per riga senza eseguirlo. Nessuna credenziale qui dentro.
 # Si compila durante la configurazione iniziale (docs/bootstrap/configurazione-server-base.md) e si
 # aggiorna, con commit, ogni volta che cambia ciò che la macchina deve controllare.
 HOST=@@HOST@@
 ADMIN=@@ADMIN@@
 LAN_CIDR=""                 # rete locale ammessa da UFW, es. 192.168.1.0/24 (sezione 0)
 MOUNTS="/"                  # punti di montaggio controllati (sezione 2: aggiungere /srv e il disco dati)
+DATA_MOUNT=""               # punto di montaggio del disco dati e del backup locale (sezione 0; disco unico: es. /srv)
 SERVICES="ssh cron"         # unit che devono essere attive (sezione 7: ufw fail2ban; sezione 8: docker)
 CONTAINERS=""               # container attesi, separati da spazi (sezione 8)
 TUNNEL_READY_URL=""         # solo con tunnel in uscita, es. http://127.0.0.1:20241/ready (cloudflared)
