@@ -14,8 +14,11 @@ hardware, versione di Ubuntu, ruolo della macchina, accesso da Internet e rete a
 ## All'inizio di ogni sessione
 
 **Configurazione iniziale.** Se `docs/bootstrap/avanzamento.md` contiene la riga `STATO: IN CORSO`, la macchina
-non ha ancora completato la base: leggi quel file e `docs/bootstrap/configurazione-server-base.md`, riprendi dal
-primo passo non completato e registra ogni passo nel file di avanzamento (con commit). Gli avvisi di
+non ha ancora completato la base: segui "Esecuzione unica" in `docs/bootstrap/configurazione-server-base.md`.
+In breve: `bash docs/bootstrap/rileva-parametri.sh`, **una sola** richiesta a @@OWNER@@ dei dati mancanti (profilo,
+esclusioni, copia remota, monitoraggio), `host.conf` compilato con commit, `ops-installa --piano` pulito; poi
+@@OWNER@@ lancia da una sessione SSH `sudo ops-installa` (una password per esecuzione) e tu leggi gli esiti in
+`/var/log/ops-installa/` (senza sudo, senza fargli copiare output). `ops-installa` aggiorna l'avanzamento da solo. Gli avvisi di
 `quick-check` sulle parti non ancora configurate sono attesi. Si passa alla gestione ordinaria solo quando il
 collaudo finale (sezione 12) è superato e il file riporta `STATO: COMPLETATO`.
 
@@ -85,9 +88,11 @@ chiedergli come risolvere tecnicamente il problema.
 - **Non fidarti ciecamente di questi documenti**: sono snapshot datati; verifica il sistema reale.
 - **Decisioni già prese** (`docs/decisions.md`): non riproporle, salvo fatti nuovi rilevanti (segnalali).
 - **Segreti**: mai in questo repository né negli output; indicare solo *dove* si trovano, mascherare.
-- **Sudo** richiede password: i comandi `sudo` li lancia @@OWNER@@ in un terminale vero (sessione SSH o console,
-  incollando poi l'output all'agente; la modalità `!` di Claude Code non ha un terminale e sudo non può chiedere la
-  password), l'agente prepara uno script con controlli e rollback e gli chiede solo quel passaggio. Nessun sudo
+- **Sudo** richiede password: i comandi `sudo` li lancia @@OWNER@@ in un terminale vero (sessione SSH o console; la
+  modalità `!` di Claude Code non ha un terminale e sudo non può chiedere la password), l'agente prepara uno script
+  con controlli e rollback e gli chiede solo quel passaggio; gli esiti si leggono dai log, non dalla chat. Per la
+  configurazione iniziale il passaggio è uno solo: `sudo ops-installa` (operazioni definite e verificate per
+  impronta, log in `/var/log/ops-installa/`). Nessun sudo
   senza password generalizzato, nessuna modalità globale che salta le approvazioni degli strumenti; i lavori
   programmati girano con i privilegi minimi (codice eseguito da root solo in `/usr/local/sbin`, di proprietà di root).
 - **APT**: rispettare i blocchi (`DPkg::Lock::Timeout`), mai aggirarli; non sovrapporsi ai backup

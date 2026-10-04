@@ -1,0 +1,548 @@
+#!/usr/bin/env bash
+# ops-installa — configurazione di base della macchina in un solo comando (pacchetto setup-server-linux).
+# Copia eseguita: /usr/local/sbin/ops-installa (root:root 0755, installata da bootstrap.sh).
+# Sorgente di riferimento: /srv/ops/docs/bootstrap/ops-installa. Procedura: configurazione-server-base.md.
+#
+#   sudo ops-installa                    esegue o riprende la configurazione dal primo passo non superato
+#   ops-installa --piano                 sola lettura, anche senza sudo: parametri, esclusioni, stato dei passi
+#   sudo ops-installa --rollback PASSO   annulla un passo con il suo script (3 5 6 7 8 9 10 10b), poi "da fare"
+#   sudo ops-installa --dichiara-correzione FILE
+#                                        accetta, con conferma scritta, la versione locale modificata di un file
+#                                        del pacchetto (es. docs/bootstrap/passo7-impostazioni.sh), per impronta
+#
+# Esegue SOLO operazioni definite: gli script dei passi e le verifiche di docs/bootstrap, ciascuno confrontato
+# prima con le impronte del pacchetto registrate da bootstrap.sh in /var/lib/ops-bootstrap (root), copiato in una
+# cartella di root e lanciato da lì. Nessun comando arbitrario, nessun sudo interno, nessuna modifica a sudoers.
+# Parametri dichiarati prima di iniziare in /srv/ops/host.conf (letto riga per riga, mai eseguito): PROFILO,
+# ESCLUSIONI, LAN_CIDR, DATA_MOUNT, ... (proposta: docs/bootstrap/rileva-parametri.sh, senza sudo).
+# Per ogni passo: dry-run (se lo script lo prevede), esecuzione solo con dry-run a 0, VERIFY dello script; arresto
+# al primo codice diverso da 0. Ogni comando gira in uno pseudo-terminale (script -q -e, nessuna pipe sull'output
+# di apt/dpkg) e ha il suo log con comando, output e codice reale in /var/log/ops-installa/<esecuzione>/, leggibile
+# dall'amministratore senza sudo (riepilogo.log; stato complessivo in /var/log/ops-installa/stato).
+# Soste per una persona, risolte nella stessa esecuzione o rilanciando lo stesso comando: conferma del firewall da
+# un nuovo login SSH (passo 7, ripristino automatico armato), riavvio presidiato (12.4), approvazione della
+# finestra di manutenzione (12.8).
+# Esito: 0 configurazione completata; 1 passo non superato; 2 uso errato; 3 controlli iniziali non superati
+# (parametri, integrità, orario, terminale); 5 in attesa di una persona (rilanciare lo stesso comando).
+set -euo pipefail
+export LC_ALL=C.UTF-8
+umask 022
+
+SELF=$(readlink -f "$0")
+# Prove in container: tutti i percorsi sotto OPS_INSTALLA_TEST_ROOT. Mai per la copia installata in /usr/local/sbin.
+T=""
+if [ -n "${OPS_INSTALLA_TEST_ROOT:-}" ] && [ "$SELF" != /usr/local/sbin/ops-installa ]; then T=$OPS_INSTALLA_TEST_ROOT; fi
+export PATH=${T:+$T/fakebin:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+OPS=$T/srv/ops
+LIBDIR=$T/var/lib/ops-bootstrap
+REF=$LIBDIR/pacchetto.manifest
+STATE=$LIBDIR/installa.state
+CORR=$T/etc/ops-installa/correzioni
+LOGROOT=$T/var/log/ops-installa
+RUNROOT=$T/run/ops-installa
+LOCK=$T/run/lock/ops-installa.lock
+INSTALLED=$T/usr/local/sbin/ops-installa
+OPS_MAINT=$T/usr/local/sbin/ops-maint
+MAINT_STATE=$T/var/lib/ops-maint
+REBOOT_FLAG=$T/var/run/reboot-required
+BOOT_ID=${T:+$T/boot_id}; BOOT_ID=${BOOT_ID:-/proc/sys/kernel/random/boot_id}
+TTY=${T:+$T/tty}; TTY=${TTY:-/dev/tty}
+RB_UNIT=ops-ufw-rollback.timer
+ROLLBACK_MIN=10
+VALID_EXCL="2 7.1 10.3 11.2 12.8"
+# file del pacchetto eseguiti o letti come root: confrontati con le impronte prima di ogni esecuzione
+SNAPSET_RE='^(docs/bootstrap/[A-Za-z0-9_.-]+\.sh|docs/bootstrap/ops-installa|maint/[A-Za-z0-9_./-]+|bin/[A-Za-z0-9_.-]+)$'
+
+# id | sezione | descrizione | azione
+STEPS=(
+  "0|0|Parametri della macchina|parametri"
+  "1|1|Verifica iniziale (registrazione)|verifica:inizio"
+  "2|2|Dischi e punti di montaggio|verifica:dischi"
+  "3|3|Struttura delle cartelle|script:passo3-cartelle.sh"
+  "4|4|Repository /srv/ops e Knowledge Base|verifica:repo"
+  "5|5|Utenti, gruppi e permessi|script:passo5-utenti.sh"
+  "6|6|Pacchetti di base|script:passo6-pacchetti.sh"
+  "7.1|7|Rete stabile (indirizzo statico)|verifica:rete"
+  "7|7|SSH, fail2ban, orario, aggiornamenti, log, UFW|ufw"
+  "8|8|Docker|script:passo8-docker.sh"
+  "9|9|Manutenzione automatica (parametri)|script:passo9-manutenzione.sh"
+  "10|10|Backup locale e prova di ripristino|backup"
+  "10b|10|Rotazione del log, secondo backup e ripristino|script1:passo10b-rotazione-verifica.sh"
+  "10.3|10|Copia remota|verifica:offsite"
+  "11.1|11|quick-check --gate|verifica:gate"
+  "11.2|11|Monitoraggio esterno (Healthchecks)|verifica:healthchecks"
+  "12|12|Accessi, ripristino di /srv/ops, montaggi|script1:passo12-verifiche.sh"
+  "12.4|12|Riavvio presidiato e controlli dopo l'avvio|riavvio"
+  "12.6|12|Monitoraggio dopo il riavvio|verifica:monitoraggio"
+  "12.7|12|Agenti (cli-update --verify)|verifica:agenti"
+  "12.8|12|Attivazione della manutenzione automatica|attivazione"
+)
+ROLLBACK_SCRIPTS="3=passo3-cartelle.sh 5=passo5-utenti.sh 6=passo6-pacchetti.sh 7=passo7-impostazioni.sh 8=passo8-docker.sh 9=passo9-manutenzione.sh 10=passo10-backup.sh 10b=passo10b-rotazione-verifica.sh"
+
+say()  { printf '%s\n' "$*"; }
+stop() { say "STOP: $*" >&2; [ -n "${RUNDIR:-}" ] && say "$(date -u '+%F %T')  STOP: $*" >> "$RUNDIR/riepilogo.log"; exit 3; }
+die()  { stop "$*"; }   # usato da passi-comune.sh
+sha()  { sha256sum -- "$1" | cut -d' ' -f1; }
+attrs() { stat -c '%U:%G %a' -- "$1"; }
+now()  { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# ------------------------------------------------------------------ stato persistente (root 0600, solo aggiunte)
+# righe "<passo> <stato> <data> <nota>" e "@<chiave> <data> <valore>"; vale l'ultima. Stati: fatto escluso errore
+# attesa-ssh attesa-riavvio rinviato annullato.
+STATE_VIEW=""   # copia leggibile (amministratore) per --piano senza sudo
+st_file() { if [ -r "$STATE" ]; then echo "$STATE"; elif [ -r "$LOGROOT/stato" ]; then echo "$LOGROOT/stato"; else echo /dev/null; fi; }
+st_get()  { awk -v k="$1" '$1 == k {v = $2} END {print v}' "$(st_file)"; }
+st_note() { awk -v k="$1" '$1 == k {v = ""; for (i = 4; i <= NF; i++) v = v (i > 4 ? " " : "") $i} END {print v}' "$(st_file)"; }
+st_meta() { awk -v k="@$1" '$1 == k {v = ""; for (i = 3; i <= NF; i++) v = v (i > 3 ? " " : "") $i} END {print v}' "$(st_file)"; }
+st_set()  { echo "$1 $2 $(now) ${3:-}" >> "$STATE"; st_publish; }
+st_meta_set() { echo "@$1 $(now) ${2:-}" >> "$STATE"; st_publish; }
+st_publish() {
+  [ -n "${STATE_VIEW:-}" ] || return 0
+  install -o root -g "$AGRP" -m 0640 "$STATE" "$STATE_VIEW.tmp" && mv -f "$STATE_VIEW.tmp" "$STATE_VIEW"
+}
+
+# ------------------------------------------------------------------ parametri
+excluded() { [[ " $ESCLUSIONI " == *" $1 "* ]]; }
+step_field() { local IFS='|'; read -r S_ID S_SEC S_DESC S_ACT <<<"$1"; }
+planned_status() {  # stato previsto di un passo: fatto | escluso | profilo | <stato registrato> | da-fare
+  local id=$1 cur; cur=$(st_get "$id")
+  if [ "$cur" = fatto ]; then echo fatto
+  elif [ "$id" = 8 ] && [ "$PROFILO" = base ]; then echo profilo
+  elif excluded "$id"; then echo escluso
+  else echo "${cur:-da-fare}"; fi
+}
+
+load_params() {  # $1 = file passi-comune.sh da usare; raccoglie TUTTI i problemi, poi si ferma una volta sola
+  # shellcheck disable=SC1090
+  . "$1"
+  OPS=${OPS_DIR:-$OPS}
+  load_host_conf
+  PROFILO=$(hc_get PROFILO); ESCLUSIONI=$(hc_get ESCLUSIONI); MOUNTS=$(hc_get MOUNTS); OFFSITE=$(hc_get OFFSITE)
+  PROBLEMI=()
+  case $PROFILO in base|docker) ;; "") PROBLEMI+=("PROFILO vuoto: base (senza container) o docker") ;; *) PROBLEMI+=("PROFILO non valido: $PROFILO (base o docker)") ;; esac
+  local e s
+  for e in $ESCLUSIONI; do [[ " $VALID_EXCL " == *" $e "* ]] || PROBLEMI+=("ESCLUSIONI: '$e' non ammesso (ammessi: $VALID_EXCL)"); done
+  [ -n "$LAN_CIDR" ] || PROBLEMI+=("LAN_CIDR vuoto: rete locale da cui è ammesso SSH (es. 192.168.1.0/24)")
+  [ -n "$DATA_MOUNT" ] || PROBLEMI+=("DATA_MOUNT vuoto: disco dati e backup locale (disco unico: /srv)")
+  [ -z "$DATA_MOUNT" ] || [ -d "$DATA_MOUNT" ] || PROBLEMI+=("DATA_MOUNT=$DATA_MOUNT non esiste")
+  [[ "$MOUNTS" =~ ^/[A-Za-z0-9/._\ -]*$ ]] || PROBLEMI+=("MOUNTS non valido: $MOUNTS")
+  for s in ssh cron ufw fail2ban; do [[ " $SERVICES " == *" $s "* ]] || PROBLEMI+=("SERVICES senza $s (atteso: ssh cron ufw fail2ban${PROFILO:+$([ "$PROFILO" = docker ] && echo ' docker')})"); done
+  if [ "$PROFILO" = docker ]; then [[ " $SERVICES " == *" docker "* ]] || PROBLEMI+=("profilo docker: SERVICES senza docker"); fi
+  if [ "$PROFILO" = base ]; then [[ " $SERVICES " != *" docker "* ]] || PROBLEMI+=("profilo base: SERVICES contiene docker"); fi
+  [ -z "$CONTAINERS" ] && [ "${SQLITE_SNAPSHOTS:-0}" = 0 ] || PROBLEMI+=("CONTAINERS/SQLITE_SNAPSHOTS: la configurazione di base è senza servizi (aggiungerli dopo, sezione 8.2)")
+  if ! excluded 10.3; then [ -n "$OFFSITE" ] || PROBLEMI+=("OFFSITE vuoto: destinazione della copia remota (o 10.3 in ESCLUSIONI)"); fi
+  return 0
+}
+
+# ------------------------------------------------------------------ log ed esecuzione in pseudo-terminale
+SEQ=0; LAST_LOG=""
+run_logged() {  # run_logged <etichetta> <comando...>: log con comando, output, codice reale; nessuna pipe
+  local label=$1 f rc=0; shift
+  SEQ=$((SEQ + 1)); f=$RUNDIR/$(printf '%02d' "$SEQ")-$label.log
+  install -o root -g "$AGRP" -m 0640 /dev/null "$f"
+  printf '# comando: %s\n# inizio: %s\n' "$*" "$(date -u '+%F %T UTC')" >> "$f"
+  say "---- $label  (log: $f)"
+  SHELL=/bin/bash script -q -e -a -c "$(printf '%q ' env "${ENVV[@]}" "$@")" "$f" || rc=$?
+  printf '\n# fine: %s — codice di uscita: %s\n' "$(date -u '+%F %T UTC')" "$rc" >> "$f"
+  printf '%s  %-26s codice %-3s %s\n' "$(date -u '+%F %T')" "$label" "$rc" "${f##*/}" >> "$RUNDIR/riepilogo.log"
+  LAST_LOG=$f
+  return "$rc"
+}
+
+# ------------------------------------------------------------------ terminale (conferme della persona)
+TTY_OK=0
+# { …; } 2>/dev/null: con "exec 7<… 2>/dev/null" lo stderr dell'intero programma resterebbe chiuso
+tty_open() { [ "$TTY_OK" = 1 ] && return 0; if { exec 7<"$TTY"; } 2>/dev/null; then TTY_OK=1; else return 1; fi; }
+ask() {  # ask "domanda" → risposta in REPLY_TXT (vuota se nessun terminale)
+  REPLY_TXT=""
+  tty_open || return 0
+  printf '%s' "$1"
+  IFS= read -r REPLY_TXT <&7 || { REPLY_TXT=""; TTY_OK=0; exec 7<&-; TTY=/nonexistent; }   # fine dell'input: come senza terminale
+  [ -z "$T" ] || echo "$REPLY_TXT"
+}
+
+# ------------------------------------------------------------------ integrità e copia verificata
+verify_and_snapshot() {
+  local want rel src got mism=() decl=() h
+  [ -d "$LIBDIR" ] && [ ! -L "$LIBDIR" ] && [ "$(attrs "$LIBDIR")" = "root:root 700" ] || stop "$LIBDIR assente o non root 0700: rieseguire bootstrap.sh"
+  [ -f "$REF" ] && [ ! -L "$REF" ] && [ "$(stat -c %U "$REF")" = root ] && [ $(( 0$(stat -c %a "$REF") & 022 )) = 0 ] \
+    || stop "impronte del pacchetto assenti o non protette ($REF): rieseguire bootstrap.sh"
+  if [ -e "$CORR" ]; then
+    [ -f "$CORR" ] && [ ! -L "$CORR" ] && [ "$(stat -c %U "$CORR")" = root ] && [ $(( 0$(stat -c %a "$CORR") & 022 )) = 0 ] \
+      || stop "$CORR non è un file di root protetto"
+  fi
+  SNAP=$RUNROOT/$RUNID
+  install -d -o root -g root -m 0700 "$RUNROOT" "$SNAP"
+  while read -r want rel; do
+    [[ "$rel" =~ $SNAPSET_RE ]] || continue
+    src=$OPS/$rel
+    if [ -L "$src" ] || [ ! -f "$src" ]; then mism+=("$rel (assente o non regolare)"); continue; fi
+    install -d -o root -g root -m 0700 "$SNAP/$(dirname "$rel")"
+    cp -- "$src" "$SNAP/$rel"; chmod 0600 "$SNAP/$rel"
+    got=$(sha "$SNAP/$rel")   # impronta della COPIA che verrà eseguita
+    [ "$got" = "$want" ] && continue
+    if [ -f "$CORR" ] && awk -v h="$got" -v r="$rel" '$1 == h && $2 == r {f = 1} END {exit !f}' "$CORR"; then decl+=("$rel"); continue; fi
+    mism+=("$rel")
+  done < "$REF"
+  # il manifest dell'amministratore deve dire lo stesso del riferimento di root
+  if [ -f "$OPS/.bootstrap/manifest" ]; then
+    while read -r want rel; do
+      [[ "$rel" =~ $SNAPSET_RE ]] || continue
+      h=$(awk -v r="$rel" '$2 == r {print $1}' "$OPS/.bootstrap/manifest")
+      [ "$h" = "$want" ] || mism+=("$OPS/.bootstrap/manifest: impronta di $rel diversa da quella registrata da bootstrap.sh")
+    done < "$REF"
+  fi
+  # la copia installata di questo programma deve essere quella del pacchetto
+  want=$(awk '$2 == "docs/bootstrap/ops-installa" {print $1}' "$REF")
+  if [ -z "$T" ] || [ -e "$INSTALLED" ]; then
+    got=$(sha "$INSTALLED" 2>/dev/null || echo assente)
+    [ "$got" = "$want" ] || mism+=("$INSTALLED diverso da docs/bootstrap/ops-installa del pacchetto (rieseguire bootstrap.sh)")
+  fi
+  [ "${#decl[@]}" -eq 0 ] || say "correzioni locali dichiarate in $CORR: ${decl[*]}"
+  if [ "${#mism[@]}" -gt 0 ]; then
+    printf '  modificato: %s\n' "${mism[@]}" >&2
+    stop "${#mism[@]} file del pacchetto non corrispondono alle impronte: nessun passo eseguito. Ripristinare i file (git -C $OPS diff) oppure dichiarare la correzione: sudo ops-installa --dichiara-correzione <file>"
+  fi
+  P=$SNAP/docs/bootstrap
+  ENVV=(OPS_DIR="$OPS" OPS_TEMPLATES="$SNAP/maint/templates" OPS_MAINT_DIR="$SNAP/maint")
+}
+
+# ------------------------------------------------------------------ amministratore: avanzamento e host.conf
+as_admin() { (cd / && runuser -u "$ADMIN" -- "$@"); }
+section_status() {  # stato aggregato di una sezione per avanzamento.md → "stato|nota"
+  local sec=$1 line st n_tot=0 n_done=0 n_excl=0 excl="" err="" wait="" ids=""
+  for line in "${STEPS[@]}"; do
+    step_field "$line"; [ "$S_SEC" = "$sec" ] || continue
+    n_tot=$((n_tot + 1)); st=$(planned_status "$S_ID"); ids="$ids $S_ID"
+    case $st in
+      fatto) n_done=$((n_done + 1)) ;;
+      escluso|profilo) n_excl=$((n_excl + 1)); excl="$excl $S_ID" ;;
+      errore) err="$err $S_ID" ;;
+      attesa-ssh|attesa-riavvio|rinviato) wait="$wait $S_ID: $(st_note "$S_ID")" ;;
+    esac
+  done
+  if [ -n "$err" ]; then echo "errore|passo${err} non superato (log in $LOGROOT/ultimo)"
+  elif [ -n "$wait" ]; then echo "in attesa|${wait# }"
+  elif [ "$n_excl" = "$n_tot" ]; then echo "escluso|$( [ "$sec" = 8 ] && [ "$PROFILO" = base ] && echo 'profilo base' || echo "ESCLUSIONI:${excl}")"
+  elif [ $((n_done + n_excl)) = "$n_tot" ]; then echo "fatto|ops-installa${excl:+; esclusi:${excl}}"
+  elif [ "$n_done" -gt 0 ]; then echo "in corso|"
+  else echo "|"; fi
+}
+update_progress() {  # $1 = completato (0/1)
+  local f=$OPS/docs/bootstrap/avanzamento.md map="" sec r kb
+  [ -f "$f" ] || return 0
+  for sec in 0 1 2 3 4 5 6 7 8 9 10 11 12; do
+    r=$(section_status "$sec"); [ "${r%%|*}" != "" ] || continue
+    map+="$sec|$r"$'\n'
+  done
+  kb=$(st_get 4); [ "$kb" = fatto ] && map+="kb|fatto|kb status superato (ops-installa)"$'\n'
+  as_admin env AV_MAP="$map" AV_DATE="$(date -u +%F)" AV_DONE="${1:-0}" awk -F'|' '
+    BEGIN { n = split(ENVIRON["AV_MAP"], L, "\n"); for (i = 1; i <= n; i++) if (L[i] != "") { split(L[i], p, "|"); st[p[1]] = p[2]; nt[p[1]] = p[3] } }
+    /^STATO: / && ENVIRON["AV_DONE"] == "1" { print "STATO: COMPLETATO"; next }
+    /^\| [0-9]+\. / { k = $2; sub(/^ /, "", k); sub(/\..*/, "", k)
+                     if (k in st) { printf "|%s| %s | %s | %s |\n", $2, st[k], ENVIRON["AV_DATE"], nt[k]; next } }
+    /^\| Knowledge Base condivisa/ && ("kb" in st) { printf "|%s| %s | %s | %s |\n", $2, st["kb"], ENVIRON["AV_DATE"], nt["kb"]; next }
+    { print }' "$f" > "$RUNDIR/avanzamento.nuovo" || { say "nota: avanzamento.md non aggiornato"; return 0; }
+  if ! cmp -s "$RUNDIR/avanzamento.nuovo" "$f"; then
+    as_admin cp -- "$RUNDIR/avanzamento.nuovo" "$f.ops-installa.tmp" && as_admin mv -f -- "$f.ops-installa.tmp" "$f"
+    as_admin git -C "$OPS" add -- docs/bootstrap/avanzamento.md \
+      && as_admin git -C "$OPS" commit -q -m "ops-installa: avanzamento della configurazione iniziale" -- docs/bootstrap/avanzamento.md \
+      || say "nota: commit di avanzamento.md non riuscito (da fare a mano)"
+  fi
+}
+set_hostconf() {  # set_hostconf KEY VALORE: solo la riga di assegnazione, come amministratore, con commit
+  local k=$1 v=$2 f=$OPS/host.conf
+  [[ "$v" =~ ^/[A-Za-z0-9/._-]+$ ]] || return 1
+  as_admin sed -i -E "s#^$k=(\"[^\"]*\"|'[^']*'|[^[:space:]]*)#$k=\"$v\"#" "$f"
+  [ "$(hc_get "$k")" = "$v" ] || return 1
+  as_admin git -C "$OPS" commit -q -m "ops-installa: $k in host.conf" -- host.conf || say "nota: commit di host.conf non riuscito"
+}
+
+# ------------------------------------------------------------------ azioni dei passi
+run_check() { run_logged "$1-verifica" bash "$P/verifiche-base.sh" "$2"; }
+run_script() {  # $1 id, $2 script, $3 = 1 se con dry-run
+  if [ "$3" = 1 ]; then run_logged "$1-dry-run" bash "$P/$2" --dry-run || return 1; fi
+  run_logged "$1" bash "$P/$2"
+}
+ssh_tuples() { ss -tnH state established '( sport = :22 )' | awk '{print $3 ">" $4}' | sort -u; }
+in_lan() { python3 -c 'import sys, ipaddress as i
+n = i.ip_network(sys.argv[1])
+for l in sys.stdin:
+    a = l.strip().split(">")[-1].rsplit(":", 1)[0].strip("[]")
+    a = a[7:] if a.startswith("::ffff:") else a
+    try:
+        if a and i.ip_address(a).version == n.version and i.ip_address(a) in n: print(l.strip())
+    except ValueError: pass' "$LAN_CIDR"; }
+new_ssh() { comm -13 <(tr ',' '\n' <<<"$(st_meta ssh_prima)" | sed '/^$/d' | sort -u) <(ssh_tuples) | in_lan; }
+ufw_active() { ufw status 2>/dev/null | grep -qx 'Status: active'; }
+
+act_ufw() {
+  local s dl n
+  s=$(st_get 7)
+  if [ "$s" != attesa-ssh ]; then
+    [ -n "$(ssh_tuples | in_lan)" ] || stop "passo 7: eseguire ops-installa da una sessione SSH dalla rete $LAN_CIDR (serve per confermare il firewall)"
+    run_logged 7-dry-run bash "$P/passo7-impostazioni.sh" --dry-run || return 1
+    st_meta_set ssh_prima "$(ssh_tuples | paste -sd,)"
+    st_meta_set ssh_scadenza "$(( $(date +%s) + ROLLBACK_MIN * 60 ))"
+    if ! run_logged 7 bash "$P/passo7-impostazioni.sh"; then
+      systemctl is-active --quiet "$RB_UNIT" && say "Ripristino automatico armato: UFW si disattiverà da solo entro $ROLLBACK_MIN minuti."
+      say "Dopo la diagnosi (log del passo 7): sudo ops-installa --rollback 7, poi sudo ops-installa."
+      return 1
+    fi
+    st_set 7 attesa-ssh "conferma da un nuovo login SSH; ripristino automatico armato"
+    update_progress 0
+  fi
+  while :; do
+    if ! systemctl is-active --quiet "$RB_UNIT"; then
+      if ufw_active; then break; fi   # confermato altrove (passo7 --confirm): la conferma lo ricontrolla
+      st_set 7 errore "ripristino automatico scattato: UFW disattivato"
+      say "Il ripristino automatico ha disattivato UFW: il nuovo login SSH non è stato confermato in tempo."
+      say "Controllare LAN_CIDR in host.conf, poi: sudo ops-installa --rollback 7 e rilanciare sudo ops-installa"
+      return 1
+    fi
+    n=$(new_ssh)
+    if [ -n "$n" ]; then say "nuovo login SSH dalla LAN rilevato: $(paste -sd' ' <<<"$n")"; break; fi
+    dl=$(date -d "@$(st_meta ssh_scadenza)" '+%H:%M:%S %Z')
+    say ""
+    say ">>> UFW è attivo. Apri ORA un NUOVO login SSH verso questa macchina, lasciando aperta questa sessione."
+    say ">>> Se il nuovo login riesce, torna qui e premi Invio. Se non riesce, non fare nulla: alle $dl UFW si disattiva da solo."
+    ask "    Invio = nuovo login riuscito; 'dopo' = esci e rilancia 'sudo ops-installa' DAL NUOVO login prima delle $dl: "
+    case $REPLY_TXT in
+      dopo|"") [ "$REPLY_TXT" = dopo ] || [ "$TTY_OK" = 0 ] || continue
+               say "In attesa della conferma: rilanciare 'sudo ops-installa' dal nuovo login SSH prima delle $dl."; return 5 ;;
+    esac
+  done
+  run_logged 7-conferma bash "$P/passo7-impostazioni.sh" --confirm || return 1
+  st_meta_set ssh_prima ""
+  st_set 7 fatto "UFW confermato da un nuovo login SSH"
+}
+
+act_backup() {
+  local repo
+  run_script 10 passo10-backup.sh 1 || return 1
+  repo=${BORG_REPO:-$DATA_MOUNT/dati/backup/borg-repo-plain}
+  if [ "$(hc_get BORG_REPO)" != "$repo" ]; then
+    set_hostconf BORG_REPO "$repo" || { say "BORG_REPO non scritto in host.conf"; return 1; }
+    say "host.conf: BORG_REPO=\"$repo\" (commit)"
+  fi
+  BORG_REPO=$repo
+}
+
+act_riavvio() {
+  local s cur
+  s=$(st_get 12.4); cur=$(cat "$BOOT_ID")
+  if [ "$s" = attesa-riavvio ] && [ "$cur" != "$(st_meta boot_prima)" ]; then
+    run_check 12.4 dopo-riavvio || return 1
+    st_set 12.4 fatto "riavvio presidiato e controlli dopo l'avvio superati"
+    return 0
+  fi
+  if ! excluded 12.8 && [ "$s" != attesa-riavvio ]; then
+    run_logged 12.4-postboot bash "$SNAP/maint/install-maint" enable postboot || return 1
+  fi
+  st_meta_set boot_prima "$cur"
+  if ! excluded 12.8 && [ -e "$REBOOT_FLAG" ]; then
+    say "Aggiornamenti in attesa di riavvio: riavvio presidiato con ops-maint attended (chiede conferma)."
+    st_set 12.4 attesa-riavvio "riavvio con ops-maint attended"
+    update_progress 0
+    run_logged 12.4-attended "$OPS_MAINT" attended || true
+    if [ -e "$MAINT_STATE/postboot-pending" ]; then
+      say "Riavvio in corso. Dopo il riavvio, da un nuovo login SSH: sudo ops-installa"
+      return 5
+    fi
+    say "ops-maint attended non ha riavviato (motivo nel log): si procede con il riavvio normale."
+  fi
+  say ""
+  say ">>> Riavvio presidiato (12.4): resta disponibile la console o l'accesso fisico."
+  ask "    Scrivi RIAVVIA per riavviare ora (poi, da un nuovo login: sudo ops-installa); Invio per rimandare: "
+  if [ "$REPLY_TXT" != RIAVVIA ]; then
+    st_set 12.4 attesa-riavvio "riavvio non ancora eseguito"; update_progress 0
+    say "Riavvio rimandato: quando è il momento, rilanciare sudo ops-installa."
+    return 5
+  fi
+  st_set 12.4 attesa-riavvio "riavvio normale avviato"
+  update_progress 0
+  say "Riavvio. Dopo l'avvio, da un nuovo login SSH: sudo ops-installa"
+  run_logged 12.4-reboot systemctl reboot || return 1
+  return 5
+}
+
+act_attivazione() {
+  local wc=$MAINT_STATE/inbox/window.conf
+  run_logged 12.8-window bash "$SNAP/maint/install-maint" enable window || return 1
+  if ! grep -qx 'APPROVED=yes' "$wc" 2>/dev/null; then
+    say ""
+    say ">>> Finestra di manutenzione automatica: domenica 04:30 UTC, aggiornamenti approvati e riavvio se richiesto,"
+    say ">>> solo con backup verificati e nessun lavoro in corso (docs/runbooks/manutenzione.md)."
+    ask "    Scrivi APPROVO per approvarla ora; Invio per rinviare (la finestra resta inattiva): "
+    if [ "$REPLY_TXT" != APPROVO ]; then
+      st_set 12.8 rinviato "approvazione della finestra non data"; return 5
+    fi
+    as_admin sed -i 's/^APPROVED=no$/APPROVED=yes/' "$wc"
+    grep -qx 'APPROVED=yes' "$wc" || { say "APPROVED=yes non scritto in $wc"; return 1; }
+    printf '%s  APPROVAZIONE della finestra data dal proprietario con conferma scritta (da registrare in docs/decisions.md)\n' \
+      "$(date -u '+%F %T')" >> "$RUNDIR/riepilogo.log"
+  fi
+  run_logged 12.8-cli-update bash "$SNAP/maint/install-maint" enable cli-update || return 1
+}
+
+do_step() {  # esegue l'azione del passo corrente; 0 superato, 1 errore, 5 pausa
+  case $S_ACT in
+    parametri) return 0 ;;
+    verifica:*) run_check "$S_ID" "${S_ACT#verifica:}" ;;
+    script:*)  run_script "$S_ID" "${S_ACT#script:}" 1 ;;
+    script1:*) run_script "$S_ID" "${S_ACT#script1:}" 0 ;;
+    ufw) act_ufw ;;
+    backup) act_backup ;;
+    riavvio) act_riavvio ;;
+    attivazione) act_attivazione ;;
+    *) say "azione sconosciuta: $S_ACT"; return 1 ;;
+  esac
+}
+
+print_plan() {
+  local line st
+  say "Configurazione iniziale di $HOST — amministratore $ADMIN, profilo ${PROFILO:-?}, pacchetto $(cat "$OPS/.bootstrap/version" 2>/dev/null || echo ?)"
+  say "Parametri: LAN_CIDR=$LAN_CIDR DATA_MOUNT=$DATA_MOUNT MOUNTS=\"$MOUNTS\" SERVICES=\"$SERVICES\" OFFSITE=${OFFSITE:-(vuoto)}"
+  say "Esclusioni dichiarate: ${ESCLUSIONI:-nessuna}"
+  for line in "${STEPS[@]}"; do
+    step_field "$line"; st=$(planned_status "$S_ID")
+    case $st in profilo) st="escluso (profilo base)" ;; da-fare) st="da fare" ;; esac
+    printf '  %-5s %-16s %s\n' "$S_ID" "$st" "$S_DESC"
+  done
+  say "Soste per una persona: conferma del firewall da un nuovo login SSH (7), riavvio presidiato (12.4)$(excluded 12.8 || echo ', approvazione della finestra (12.8)')."
+}
+plan_hash() { printf '%s|' "$PROFILO" "$ESCLUSIONI" "$LAN_CIDR" "$DATA_MOUNT" "$MOUNTS" "$SERVICES" "$OFFSITE" "$(cat "$OPS/.bootstrap/version" 2>/dev/null)" | sha256sum | cut -c1-16; }
+
+finish_summary() {
+  say ""
+  say "Log di questa esecuzione: $RUNDIR (riepilogo.log); stato: $LOGROOT/stato — leggibili da $ADMIN senza sudo."
+}
+
+# ================================================================== comandi
+MODE=run; ARG=""
+case "${1:-}" in
+  "") ;;
+  --piano|--stato) MODE=piano ;;
+  --rollback) MODE=rollback; ARG=${2:-} ;;
+  --dichiara-correzione) MODE=correzione; ARG=${2:-} ;;
+  -h|--help) sed -n '2,32p' "$SELF"; exit 0 ;;
+  *) say "opzione sconosciuta: $1" >&2; exit 2 ;;
+esac
+
+if [ "$MODE" = piano ]; then   # sola lettura, SENZA sudo: parametri dal file di /srv/ops, stato dalla copia leggibile
+  # come root si includerebbe passi-comune.sh di /srv/ops senza verificarlo: --piano solo come amministratore
+  [ "$(id -u)" != 0 ] || { say "--piano va eseguito senza sudo, come amministratore" >&2; exit 2; }
+  RUNDIR=""
+  OPS_DIR=$OPS load_params "$OPS/docs/bootstrap/passi-comune.sh"
+  print_plan
+  if [ "${#PROBLEMI[@]}" -gt 0 ]; then say "Parametri da completare in $OPS/host.conf prima di iniziare:"; printf '  - %s\n' "${PROBLEMI[@]}"; exit 3; fi
+  say "Parametri completi: il proprietario può lanciare, da una sessione SSH:  sudo ops-installa"
+  exit 0
+fi
+
+[ "$(id -u)" = 0 ] || { say "va eseguito con sudo (una sola volta: tutto il resto gira come root)" >&2; exit 2; }
+install -d -o root -g root -m 0755 "$(dirname "$LOCK")"
+exec 9>"$LOCK"; flock -n 9 || { say "un'altra esecuzione di ops-installa è in corso" >&2; exit 3; }
+RUNID=$(date -u +%Y%m%d-%H%M%S); RUNDIR=""
+
+if [ "$MODE" = correzione ]; then
+  # accetta la versione locale di UN file del pacchetto: impronta registrata in un file di root, con conferma scritta
+  [ -f "$REF" ] && [ "$(stat -c %U "$REF")" = root ] || stop "impronte del pacchetto assenti ($REF)"
+  [[ "$ARG" =~ $SNAPSET_RE ]] && awk -v r="$ARG" '$2 == r {f = 1} END {exit !f}' "$REF" \
+    || stop "--dichiara-correzione: indicare un file del pacchetto, es. docs/bootstrap/passo7-impostazioni.sh"
+  [ -f "$OPS/$ARG" ] && [ ! -L "$OPS/$ARG" ] || stop "$OPS/$ARG assente o non regolare"
+  ADMIN=$(awk -F= '$1 == "ADMIN" {print $2}' "$OPS/host.conf" | tr -d '"' | tail -n 1)
+  id -u "$ADMIN" >/dev/null 2>&1 || stop "ADMIN non valido in host.conf"
+  TMPF=$(mktemp); trap 'rm -f "$TMPF"' EXIT; cp -- "$OPS/$ARG" "$TMPF"; h=$(sha "$TMPF")
+  [ "$h" != "$(awk -v r="$ARG" '$2 == r {print $1}' "$REF")" ] || { say "$ARG è identico al pacchetto: nessuna correzione da dichiarare"; exit 0; }
+  base=$(as_admin git -C "$OPS" log --format=%H --grep '^bootstrap: pacchetto' -n 1 2>/dev/null || true)
+  say "Differenze di $ARG rispetto alla distribuzione del pacchetto${base:+ (commit ${base:0:10})}:"
+  if [ -n "$base" ]; then as_admin git -C "$OPS" --no-pager diff "$base" -- "$ARG" || true; else say "  (storico Git non disponibile)"; fi
+  say "Impronta della versione locale: $h"
+  ask "Scrivi SI per accettare questa versione come correzione locale (verrà eseguita come root da ops-installa): "
+  [ "$REPLY_TXT" = SI ] || { say "nessuna modifica"; exit 0; }
+  install -d -o root -g root -m 0755 "$(dirname "$CORR")"
+  [ -e "$CORR" ] || install -o root -g root -m 0644 /dev/null "$CORR"
+  printf '%s  %s  %s\n' "$h" "$ARG" "$(now)" >> "$CORR"
+  say "registrata in $CORR: $h  $ARG"
+  exit 0
+fi
+
+trap '[ -n "${SNAP:-}" ] && rm -rf -- "$SNAP"' EXIT
+verify_and_snapshot
+OPS_DIR=$OPS load_params "$P/passi-comune.sh"
+AGRP=$(id -gn "$ADMIN")   # gruppo primario dell'amministratore: legge i log senza sudo
+command -v script >/dev/null || stop "manca il comando script (pacchetto bsdutils)"
+# log leggibili dall'amministratore senza sudo
+install -d -o root -g "$AGRP" -m 2750 "$LOGROOT"
+RUNDIR=$LOGROOT/$RUNID; install -d -o root -g "$AGRP" -m 2750 "$RUNDIR"
+install -o root -g "$AGRP" -m 0640 /dev/null "$RUNDIR/riepilogo.log"
+ln -sfn "$RUNID" "$LOGROOT/ultimo"
+STATE_VIEW=$LOGROOT/stato
+[ -e "$STATE" ] || install -o root -g root -m 0600 /dev/null "$STATE"
+[ "$(attrs "$STATE")" = "root:root 600" ] && [ ! -L "$STATE" ] || stop "$STATE non è un file root 0600"
+st_publish
+say "ops-installa: esecuzione $RUNID ($(date -u '+%F %T UTC'))"
+say "$(date -u '+%F %T')  inizio esecuzione ($MODE${ARG:+ $ARG})" >> "$RUNDIR/riepilogo.log"
+
+if [ "$MODE" = rollback ]; then
+  scr=""; for kv in $ROLLBACK_SCRIPTS; do [ "${kv%%=*}" = "$ARG" ] && scr=${kv#*=}; done
+  [ -n "$scr" ] || stop "--rollback: passo tra 3 5 6 7 8 9 10 10b"
+  ask "Annullare il passo $ARG con '$scr --rollback'? Scrivi SI: "
+  [ "$REPLY_TXT" = SI ] || { say "nessuna modifica"; exit 0; }
+  rc=0; run_logged "$ARG-rollback" bash "$P/$scr" --rollback || rc=$?
+  if [ "$rc" = 0 ]; then st_set "$ARG" annullato "rollback eseguito"; else st_set "$ARG" errore "rollback con codice $rc"; fi
+  update_progress 0; finish_summary; exit "$rc"
+fi
+
+# ---- PRECHECK globale: parametri (tutti i problemi insieme), orario, terminale, piano confermato
+if [ "${#PROBLEMI[@]}" -gt 0 ]; then
+  st_set 0 errore "parametri incompleti"
+  { say "Parametri da completare in $OPS/host.conf (proposta: bash $OPS/docs/bootstrap/rileva-parametri.sh):"; printf '  - %s\n' "${PROBLEMI[@]}"; } | tee -a "$RUNDIR/riepilogo.log"
+  stop "parametri incompleti: nessun passo eseguito"
+fi
+HM=$(date -u +%H%M); [ -z "$T" ] || HM=${OPS_INSTALLA_TEST_HM:-1200}
+if [ "$HM" -ge 0300 ] && [ "$HM" -lt 0410 ]; then stop "03:00–04:10 UTC: finestra del backup notturno, rilanciare dopo"; fi
+if [ "${HM:0:2}" = 06 ]; then stop "06:00–07:00 UTC: aggiornamenti automatici, rilanciare dopo le 07:00 UTC"; fi
+print_plan | tee -a "$RUNDIR/riepilogo.log"
+ph=$(plan_hash)
+if [ "$(st_meta piano)" != "$ph" ]; then
+  ask "Piano, profilo ed esclusioni sono corretti? Scrivi SI per procedere: "
+  [ "$REPLY_TXT" = SI ] || stop "piano non confermato (serve un terminale vero: sessione SSH dell'amministratore)"
+  st_meta_set piano "$ph"
+fi
+st_set 0 fatto "parametri completi (profilo $PROFILO)"
+
+# ---- passi, dal primo non superato
+for line in "${STEPS[@]}"; do
+  step_field "$line"
+  st=$(planned_status "$S_ID")
+  case $st in
+    fatto) continue ;;
+    escluso|profilo)
+      [ "$(st_get "$S_ID")" = escluso ] || st_set "$S_ID" escluso "$( [ "$st" = profilo ] && echo 'profilo base' || echo 'dichiarato in ESCLUSIONI')"
+      continue ;;
+  esac
+  [ "$S_ID" = 0 ] && continue
+  say ""; say "==== passo $S_ID — $S_DESC"
+  say "$(date -u '+%F %T')  passo $S_ID: inizio" >> "$RUNDIR/riepilogo.log"
+  rc=0; do_step || rc=$?
+  case $rc in
+    0) [ "$(st_get "$S_ID")" = fatto ] || st_set "$S_ID" fatto "${LAST_LOG##*/}"; update_progress 0 ;;
+    5) update_progress 0; say "$(date -u '+%F %T')  passo $S_ID: IN ATTESA ($(st_note "$S_ID"))" >> "$RUNDIR/riepilogo.log"
+       finish_summary; exit 5 ;;
+    *) [ "$(st_get "$S_ID")" = errore ] || st_set "$S_ID" errore "codice $rc, log ${LAST_LOG##*/}"; update_progress 0
+       say ""; say "PASSO $S_ID NON SUPERATO (codice $rc): nessun passo successivo eseguito. Log: ${LAST_LOG:-$RUNDIR/riepilogo.log}"
+       say "$(date -u '+%F %T')  passo $S_ID: NON SUPERATO (codice $rc)" >> "$RUNDIR/riepilogo.log"
+       say "Dopo la correzione: rilanciare sudo ops-installa (riprende da questo passo; i passi superati non vengono ripetuti)."
+       finish_summary; exit 1 ;;
+  esac
+done
+
+update_progress 1
+st_meta_set completato "$(now)"
+say ""; say "CONFIGURAZIONE INIZIALE COMPLETATA: avanzamento.md riporta STATO: COMPLETATO (commit)."
+say "$(date -u '+%F %T')  COMPLETATA" >> "$RUNDIR/riepilogo.log"
+say "L'agente completa ora la documentazione della macchina (overview, STATUS, CHANGELOG, decisioni) e passa alla gestione ordinaria."
+finish_summary
+exit 0

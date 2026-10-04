@@ -176,7 +176,8 @@ fi
 FAILED_BEFORE=$(systemctl --failed --plain --no-legend | awk '{print $1}' | sort)
 echo "unità in errore prima: ${FAILED_BEFORE:-nessuna}"
 echo "sessioni SSH aperte (un ban fail2ban le bloccherebbe tutte per lo stesso IP):"
-who | sed 's/^/  /'
+# "who" è vuoto su Ubuntu 26.04 (manca /run/utmp): connessioni TCP stabilite sulla porta 22
+ss -tnH state established '( sport = :22 )' | awk '{print "  " $4}'
 
 if [ "${#TODO[@]}" -gt 0 ]; then
   SIM=$(apt-get -s "${APT_OPTS[@]}" install "${TODO[@]}")

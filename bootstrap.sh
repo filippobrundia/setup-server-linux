@@ -26,6 +26,10 @@ PKG=$(cd "$(dirname "$0")" && pwd)
 PKG_VERSION=$(cat "$PKG/VERSION")
 OPS=/srv/ops
 LOG=/var/log/ops-bootstrap.log
+# impronte del pacchetto per ops-installa: copia di root, non modificabile dall'amministratore (né dagli agenti)
+REFDIR=/var/lib/ops-bootstrap
+REF=$REFDIR/pacchetto.manifest
+INSTALLA=/usr/local/sbin/ops-installa
 NODE_MAJOR=22
 NS_KEY=/usr/share/keyrings/nodesource.gpg
 NS_KEY_URL=https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
@@ -99,7 +103,7 @@ fi
 for f in payload/ops/AGENTS.md.tmpl payload/ops/maint/install-maint payload/ops/maint/ops-maint payload/home/bash_aliases.block; do
   [ -f "$PKG/$f" ] || die "pacchetto incompleto: manca $f"
 done
-for f in "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/install-maint" "$PKG"/payload/ops/docs/bootstrap/*.sh; do
+for f in "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/install-maint" "$PKG"/payload/ops/docs/bootstrap/*.sh "$PKG/payload/ops/docs/bootstrap/ops-installa"; do
   bash -n "$f" || die "errore di sintassi in $f"
 done
 
@@ -218,6 +222,11 @@ fi
 for u in ops-maint-window.timer ops-cli-update.timer; do
   if [ -d /run/systemd/system ] && systemctl is-enabled --quiet "$u" 2>/dev/null; then plan "nota: $u è già abilitato (lasciato com'è)"; fi
 done
+# --- Comando unico della configurazione iniziale ---
+if [ -e "$INSTALLA" ] && ! head -n 4 "$INSTALLA" | grep -q 'ops-installa'; then conflict "$INSTALLA esiste e non è del pacchetto"; fi
+if [ -e "$REFDIR" ]; then
+  [ -d "$REFDIR" ] && [ ! -L "$REFDIR" ] && [ "$(stat -c '%U:%G %a' "$REFDIR")" = "root:root 700" ] || conflict "$REFDIR esiste e non è una cartella root 0700"
+fi
 
 fi
 # --- Esito del controllo ---
@@ -285,6 +294,15 @@ install -d -o "$ADMIN" -g "$ADMIN" -m 0775 "$OPS/.bootstrap"
   if [ "$KBONLY" = 1 ]; then for k in "${!OLD[@]}"; do case $k in knowledge-base/*) continue ;; esac; grep -qxF "$k" "$STAGE/out.list" || echo "${OLD[$k]}  $k"; done; fi
 } | sort -k2 > "$STAGE/manifest"
 install -o "$ADMIN" -g "$ADMIN" -m 0644 "$STAGE/manifest" "$OPS/.bootstrap/manifest"
+# Copia di root delle impronte (riferimento di ops-installa). Con --knowledge-base-only si aggiornano solo le voci
+# trattate e le altre restano quelle della copia di root (mai quelle del manifest dell'amministratore).
+if [ "$KBONLY" = 0 ]; then
+  install -d -o root -g root -m 0700 "$REFDIR"; install -o root -g root -m 0644 "$STAGE/manifest" "$REF"
+elif [ -f "$REF" ]; then
+  { awk 'NR == FNR {skip[$1] = 1; next} !($2 in skip)' "$STAGE/out.list" "$REF" 2>/dev/null
+    while IFS= read -r rel; do echo "$(sha "$STAGE/ops/$rel")  $rel"; done < "$STAGE/out.list"; } | sort -k2 > "$STAGE/ref"
+  install -o root -g root -m 0644 "$STAGE/ref" "$REF"
+fi
 if [ "$KBONLY" = 1 ]; then echo "$PKG_VERSION" > "$STAGE/kbversion"; install -o "$ADMIN" -g "$ADMIN" -m 0644 "$STAGE/kbversion" "$OPS/.bootstrap/knowledge-base-version"
 else echo "$PKG_VERSION" > "$STAGE/version"; install -o "$ADMIN" -g "$ADMIN" -m 0644 "$STAGE/version" "$OPS/.bootstrap/version"; fi
 # --- Knowledge Base condivisa (repository separato; copia locale non versionata nella foundation) ---
@@ -367,8 +385,12 @@ else
   install -o "$ADMIN" -g "$ADMIN" -m 0600 "$PKG/payload/home/claude-settings.json" "$CS"; log "  creato ~/.claude/settings.json"
 fi
 
-log "== 5/5 manutenzione (installata, non attivata)"
+log "== 5/5 manutenzione (installata, non attivata) e comando unico ops-installa"
 "$OPS/maint/install-maint" install --admin "$ADMIN" | sed 's/^/  /' | tee -a "$LOG"
+if ! cmp -s "$STAGE/ops/docs/bootstrap/ops-installa" "$INSTALLA"; then
+  install -d -m 0755 "$(dirname "$INSTALLA")"
+  install -o root -g root -m 0755 "$STAGE/ops/docs/bootstrap/ops-installa" "$INSTALLA"; log "  installato: $INSTALLA"
+fi
 
 # ============================================================== VERIFY
 log "== VERIFY"
@@ -389,6 +411,9 @@ if [ -d /run/systemd/system ]; then
     log "  ERRORE: systemctl list-unit-files non riuscito (rc=$?): stato delle unit ops-* non verificabile"; v_ok=0
   fi
 fi
+if cmp -s "$STAGE/ops/docs/bootstrap/ops-installa" "$INSTALLA" && [ "$(stat -c '%U %a' "$INSTALLA")" = "root 755" ] \
+   && cmp -s "$STAGE/manifest" "$REF"; then log "  $INSTALLA e impronte di riferimento ($REF) installati"
+else log "  $INSTALLA o $REF non conformi"; v_ok=0; fi
 [ "$v_ok" = 1 ] || die "verifica finale non superata (vedi sopra)"
 if [ "$KB_OK" != 1 ]; then
   log "ATTENZIONE: Knowledge Base condivisa NON recuperata (fase non completata): vedere le istruzioni sopra."
@@ -396,4 +421,5 @@ if [ "$KB_OK" != 1 ]; then
   exit 4
 fi
 log "Fatto. Prossimo passo, come $ADMIN in un nuovo terminale:  claude"
-log "  (completare il login personale; l'agente trova la checklist in /srv/ops e prosegue secondo AGENTS.md)"
+log "  (completare il login personale; l'agente rileva i parametri, chiede una sola volta i dati mancanti e poi"
+log "   indica il comando unico da lanciare in una sessione SSH: sudo ops-installa)"

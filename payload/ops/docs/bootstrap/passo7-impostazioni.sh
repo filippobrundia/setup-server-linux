@@ -135,7 +135,7 @@ fail2ban-client status sshd | sed -E 's/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/<IP>/g; s
 
 echo "== PRECHECK: orario (7.5)"
 [ "$(timedatectl show -P Timezone)" = Etc/UTC ] && ok "Timezone Etc/UTC" || ko "Timezone $(timedatectl show -P Timezone)"
-ntpc=$(for u in chrony systemd-timesyncd; do systemctl is-active --quiet "$u" && echo "$u"; done | paste -sd' ')
+ntpc=$(for u in chrony systemd-timesyncd; do if systemctl is-active --quiet "$u"; then echo "$u"; fi; done | paste -sd' ')
 [ "$(timedatectl show -P NTPSynchronized)" = yes ] && ok "NTPSynchronized=yes (client attivo: ${ntpc:-nessuno noto})" || ko "NTP non sincronizzato"
 
 echo "== PRECHECK: aggiornamenti automatici (7.6)"
@@ -178,8 +178,9 @@ if [ "$MODE" = dry ]; then
     && ok "configurazione invariata (${#CONF_FILES[@]} file: UFW, SSH, APT, fail2ban)" || { ko "configurazione cambiata durante il dry-run"; exit 1; }
   # non è "nessuna scrittura": unattended-upgrade --dry-run scrive nel suo log e usa un lock, sudo scrive nel journal
   echo "  file scritti durante il dry-run (log, lock, cache; journal escluso):"
-  find /etc /var/log /var/lib /var/cache /run -xdev -type f -newermt "$T0" ! -path '/var/log/journal/*' 2>/dev/null \
-    | sed 's/^/    /' | head -20
+  # elenco in una variabile, stampa senza pipe (con pipefail un lettore che chiude prima dava uscita 141)
+  written=$(find /etc /var/log /var/lib /var/cache /run -xdev -type f -newermt "$T0" ! -path '/var/log/journal/*' 2>/dev/null || true)
+  awk 'NR <= 20 { print "    " $0 }' <<<"$written"
   exit 0
 fi
 
@@ -202,6 +203,7 @@ echo "  stato: $STATE"
 echo "== MODIFICA"
 for r in "${RANGES[@]}"; do ufw limit from "$r" to any port 22 proto tcp comment 'SSH dalla LAN'; done
 # ripristino automatico armato PRIMA dell'attivazione: se l'accesso si perde, UFW si disattiva da solo
+RB_AT=$(date -d "+${ROLLBACK_MIN} min" '+%F %T %Z')   # timer monotono: l'ora reale di systemctl show resta vuota
 systemd-run --quiet --unit="$RB_UNIT" --on-active="${ROLLBACK_MIN}min" --timer-property=AccuracySec=1s \
   /usr/sbin/ufw disable
 systemctl is-active --quiet "$RB_UNIT.timer" || die "timer di ripristino non armato: UFW NON attivato (regole aggiunte, inattive)"
@@ -213,7 +215,7 @@ ufw status verbose
 rules_ok && ok "UFW attivo con le ${#RANGES[@]} regole LIMIT attese su 22/tcp" || ko "UFW non attivo o regole inattese"
 PEERS=$(ssh_peers); miss=$(uncovered <<<"$PEERS")
 [ -n "$PEERS" ] && [ -z "$miss" ] && ok "sessione SSH ancora stabilita dopo l'attivazione" || ko "sorgenti fuori regola: $miss"
-echo "  ripristino automatico: $(systemctl show -P NextElapseUSecRealtime "$RB_UNIT.timer" 2>/dev/null || echo '?') ($RB_UNIT.timer)"
+echo "  ripristino automatico: verso le $RB_AT ($RB_UNIT.timer)"
 echo
 echo "ORA: apri un NUOVO login SSH (password corretta). Se riesce:"
 echo "  sudo bash $OPS/docs/bootstrap/passo7-impostazioni.sh --confirm"

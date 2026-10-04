@@ -32,7 +32,8 @@ echo "== 12.5 ACCESSI"
 st=$(ufw status verbose)
 echo "$st" | sed 's/^/  /'
 grep -qx 'Status: active' <<<"$st" && ok "UFW attivo" || ko "UFW non attivo"
-grep -q 'Default: deny (incoming), allow (outgoing), deny (routed)' <<<"$st" && ok "politiche deny in / allow out / deny routed" || ko "politiche inattese"
+# senza Docker (ip_forward=0) UFW stampa "disabled (routed)": stesso effetto di "deny (routed)"
+grep -qE 'Default: deny \(incoming\), allow \(outgoing\), (deny|disabled) \(routed\)' <<<"$st" && ok "politiche deny in / allow out / deny routed" || ko "politiche inattese"
 grep -qE "^22/tcp +LIMIT IN +${LAN_CIDR//./\\.}( |$)" <<<"$st" && ok "limit 22/tcp da $LAN_CIDR" || ko "manca limit 22/tcp da $LAN_CIDR"
 open=$(grep -E ' (ALLOW|LIMIT) IN +Anywhere' <<<"$st" || true)
 [ -z "$open" ] && ok "nessuna regola aperta verso Internet" || { ko "regole aperte verso Internet:"; echo "$open" | sed 's/^/    /'; }

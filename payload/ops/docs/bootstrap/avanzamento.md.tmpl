@@ -3,9 +3,9 @@
 STATO: IN CORSO
 
 Pacchetto `setup-server-linux` @@PKG_VERSION@@, distribuito il @@DATE@@ (amministratore `@@ADMIN@@`).
-Procedura: `configurazione-server-base.md`. Aggiornare una riga per passo (stato `fatto` / `in corso` /
-`rinviato: motivo`, data, note brevi) e fare commit. Quando il passo 12 è superato, sostituire la riga di stato
-con `STATO: COMPLETATO`.
+Procedura: `configurazione-server-base.md` ("Esecuzione unica"). Le righe le aggiorna `ops-installa` con commit
+(`fatto`, `escluso`, `in attesa`, `errore`); scrive `STATO: COMPLETATO` solo quando il passo 12 è superato. Log ed
+esiti: `/var/log/ops-installa/` (leggibili dall'amministratore senza sudo).
 
 | Passo | Stato | Data | Note |
 |---|---|---|---|

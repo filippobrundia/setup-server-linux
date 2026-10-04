@@ -8,7 +8,9 @@
 
 OPS=${OPS_DIR:-/srv/ops}
 HOSTCONF=$OPS/host.conf
-TEMPLATES=$OPS/maint/templates
+# OPS_TEMPLATES / OPS_MAINT_DIR: copie verificate preparate da ops-installa (root), altrimenti quelle di /srv/ops
+TEMPLATES=${OPS_TEMPLATES:-$OPS/maint/templates}
+MAINT_SRC=${OPS_MAINT_DIR:-$OPS/maint}
 
 # valore dell'ultima assegnazione KEY=... (virgolette e commento finale tolti, nessuna espansione)
 hc_get() {

@@ -50,9 +50,10 @@ si aggiungono sotto, con la loro data.
   vecchio archiviato come corrente). Scartato `sqlite_databases` di borgmatic 1.8.3 (dump in parallelo alla
   lettura di borg).
 
-### 2026-10-04 — Nessun amministratore nel gruppo `docker` (ereditata)
+### 2026-10-04 — Nessun amministratore nei gruppi `docker` e `lxd` (ereditata)
 - L'accesso a `/run/docker.sock` equivale a root senza password e aggirerebbe "sudo con password": nessun utente nel
-  gruppo `docker`; i comandi docker si danno con `sudo`. `quick-check` senza container previsti si accontenta di
+  gruppo `docker`; i comandi docker si danno con `sudo`. Lo stesso vale per `lxd`, a cui l'installer di Ubuntu Server
+  aggiunge il primo utente: l'amministratore ne viene tolto (`passo5-utenti.sh`, `gpasswd -d <ADMIN> lxd`). `quick-check` senza container previsti si accontenta di
   `docker.service` attivo; con container previsti lo stato dei container non è leggibile senza privilegi (canale di
   sola lettura da decidere prima del primo servizio).
 

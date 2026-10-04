@@ -12,7 +12,7 @@ prepara lo script con controlli e rollback).
   una sessione già autenticata tenuta aperta durante la prova, accesso fisico disponibile.
 
 Formato: **Controllo** (sola lettura) → **Se manca** (azione) → **Verifica**.
-**Avanzamento:** dopo ogni passo aggiornare `docs/bootstrap/avanzamento.md` (stato, data, note) e fare commit.
+**Avanzamento:** `docs/bootstrap/avanzamento.md`, aggiornato con commit da `ops-installa` (sezione "Esecuzione unica").
 Un'interruzione si riprende dal primo passo non completato: ogni controllo è ripetibile.
 **Problemi:** si registrano in `STATUS.md` solo quando **riscontrati** su questa macchina; le voci "Controllo
 ereditato" indicano cosa verificare perché sul server di origine era un limite noto.
@@ -20,12 +20,51 @@ ereditato" indicano cosa verificare perché sul server di origine era un limite 
 Già fatto da `bootstrap.sh`: `/srv/ops` con regole, documenti e script; Node.js 22 (NodeSource) e Claude Code per
 l'amministratore; adattatori nella home; componenti di manutenzione installati **senza** unit abilitate.
 
-**Script dei passi** (`docs/bootstrap/passo*.sh`, collaudati su Ubuntu 26.04): eseguono i passi 3, 6–10 e le verifiche
-del 12 con PRECHECK → BACKUP → MODIFICA → VERIFY, manifest in `/var/lib/ops-bootstrap/` e `--rollback`. Li lancia
-l'amministratore in un **terminale vero** (SSH o console; non la modalità `!` di Claude Code), prima con `--dry-run`:
-`sudo bash /srv/ops/docs/bootstrap/<script> --dry-run`, poi senza opzioni. Leggono i parametri da `host.conf` (riga per
-riga, senza eseguirlo) e da `/etc/os-release`: si fermano se un parametro necessario manca. Coprono la base **senza
-servizi**: dati, esclusioni e snapshot dei servizi restano passi manuali.
+**Script dei passi** (`docs/bootstrap/passo*.sh`, collaudati su Ubuntu 26.04): eseguono i passi 3, 5–10 e le verifiche
+del 12 con PRECHECK → BACKUP → MODIFICA → VERIFY, manifest in `/var/lib/ops-bootstrap/` e `--rollback`;
+`verifiche-base.sh` controlla, in sola lettura, le voci senza uno script proprio (1, 2, 4, 7.1, 10.3, 11, 12.4–12.7).
+Leggono i parametri da `host.conf` (riga per riga, senza eseguirlo) e da `/etc/os-release`. Coprono la base **senza
+servizi**: dati, esclusioni e snapshot dei servizi restano passi manuali. Non si lanciano uno per uno: li esegue
+`ops-installa` (sotto).
+
+## Esecuzione unica (procedura normale)
+
+Dopo la distribuzione: **un comando del proprietario** per tutta la parte privilegiata, poi solo autenticazioni e
+conferme importanti. Niente sequenze di `sudo` a mano, niente script locali, niente output copiati in chat.
+
+1. **Parametri (agente, senza sudo).** `bash /srv/ops/docs/bootstrap/rileva-parametri.sh` propone `LAN_CIDR`,
+   `MOUNTS`, `DATA_MOUNT`, `SERVICES` ed elenca ciò che va deciso dal proprietario. L'agente gli fa **una sola
+   richiesta** con tutto: `PROFILO` (`base` o `docker`), `ESCLUSIONI` (tra `2 7.1 10.3 11.2 12.8`, ognuna con il
+   motivo), destinazione della copia remota, monitoraggio esterno. Poi `rileva-parametri.sh --scrivi --profilo …
+   --esclusioni "…"`, controllo del diff, commit di `host.conf` e `ops-installa --piano` (sola lettura) senza
+   problemi. Le esclusioni si registrano anche in `docs/decisions.md`.
+2. **Comando unico (proprietario).** Da una **sessione SSH** dalla LAN (terminale vero; serve per confermare il
+   firewall): `sudo ops-installa`. Una password; il programma mostra piano ed esclusioni e chiede `SI` una volta, poi
+   esegue i passi in ordine (dry-run → esecuzione solo con dry-run a 0 → VERIFY) e si ferma al primo esito diverso
+   da 0.
+3. **Soste per una persona**, nella stessa esecuzione o rilanciando lo stesso comando:
+   - **passo 7**: con UFW appena attivato (ripristino automatico armato per 10 minuti) aprire un **nuovo login SSH**,
+     poi Invio nella sessione di `ops-installa`: il nuovo collegamento viene rilevato e la conferma data. Se si esce,
+     rilanciare `sudo ops-installa` **dal nuovo login** prima della scadenza;
+   - **12.4 riavvio presidiato**: scrivere `RIAVVIA` (con aggiornamenti in attesa e 12.8 non escluso il riavvio passa
+     da `ops-maint attended`, che chiede `SI`); dopo l'avvio, da un nuovo login: `sudo ops-installa` (controlli dopo
+     l'avvio e passi finali);
+   - **12.8**: scrivere `APPROVO` per approvare la finestra di manutenzione automatica (l'agente lo registra in
+     `docs/decisions.md`).
+4. **Esiti (agente, senza sudo).** `/var/log/ops-installa/ultimo/riepilogo.log` (passi, codici, log), un file per
+   comando con output e codice reale, `/var/log/ops-installa/stato`. `ops-installa` aggiorna da solo
+   `avanzamento.md` (con commit) e scrive `STATO: COMPLETATO` solo con il passo 12 superato. L'agente completa poi
+   `docs/` della macchina (overview, network, system, STATUS, CHANGELOG, decisioni).
+
+Esiti di `ops-installa`: 0 completato · 1 passo non superato (correggere, poi rilanciare: riprende da quel passo, i
+passi superati non vengono ripetuti) · 3 controlli iniziali (parametri, integrità, orario 03:00–04:10 e 06:00–07:00
+UTC) · 5 in attesa di una persona. Un passo eseguito si annulla con `sudo ops-installa --rollback <passo>`.
+
+**Garanzie.** Esegue solo gli script del pacchetto, confrontati con le impronte registrate da `bootstrap.sh` in
+`/var/lib/ops-bootstrap/` (root) e lanciati da una copia di root: un file modificato ferma tutto prima di iniziare,
+salvo una correzione accettata dal proprietario con `sudo ops-installa --dichiara-correzione <file>`. Nessun
+`NOPASSWD`, nessun sudo interno, nessun comando arbitrario. Ogni comando gira in uno pseudo-terminale (`script`),
+senza pipe sull'output di apt/dpkg.
 
 ---
 
@@ -104,13 +143,15 @@ altre regole di `AGENTS.md`.
 ## 5. Utenti, gruppi e permessi
 
 - **Controllo:** `id <ADMIN>`; `sudo grep -rn NOPASSWD /etc/sudoers /etc/sudoers.d`;
-  `getent passwd | awk -F: '$7 !~ /(nologin|false)$/'`.
+  `getent passwd | awk -F: '$7 !~ /(nologin|false)$/ && $1 != "sync"'` (`sync`, con shell `/bin/sync`, è atteso).
 - **Stato atteso:** utenti con shell solo `root` e l'amministratore; amministratore nei gruppi `sudo`, `adm`, **mai**
-  in `docker` (decisione ereditata 2026-10-04: equivale a root senza password); sudo con password, nessun
-  `NOPASSWD`; nessuna modalità degli agenti che salti le approvazioni.
-- **Se manca:** 🔌 `sudo usermod -aG adm <ADMIN>`; rimuovere un `NOPASSWD` solo dopo aver verificato che `sudo`
-  con password funziona.
-- **Verifica:** ripetere il controllo.
+  in `docker` né in `lxd` (decisione ereditata 2026-10-04: equivalgono a root senza password; l'installer di Ubuntu
+  Server aggiunge il primo utente a `lxd`); sudo con password, nessun `NOPASSWD`; nessuna modalità degli agenti che
+  salti le approvazioni.
+- **Se manca:** 🔌 `sudo usermod -aG adm <ADMIN>`; `sudo gpasswd -d <ADMIN> lxd` (e `docker`); rimuovere un
+  `NOPASSWD` solo dopo aver verificato che `sudo` con password funziona. Script: `passo5-utenti.sh` (gruppi; un
+  `NOPASSWD` o un altro utente con shell lo fermano senza modifiche).
+- **Verifica:** ripetere il controllo (i gruppi cambiati valgono dai login successivi).
 
 ## 6. Pacchetti di base
 

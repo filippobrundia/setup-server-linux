@@ -19,3 +19,7 @@ OFFSITE=""                  # destinazione della copia remota, solo descrittiva 
 OFFSITE_LOG=/var/log/offsite-sync.log
 OFFSITE_CRON_MATCH="rclone sync"
 MONITOR_CFG="$HOME/.config/ops"   # URL di ping e chiave Healthchecks (0600), mai nel repository
+# Configurazione iniziale con ops-installa (docs/bootstrap/configurazione-server-base.md, "Esecuzione unica"):
+# dichiarati PRIMA di iniziare, proposti da docs/bootstrap/rileva-parametri.sh.
+PROFILO=""                  # base (senza container) | docker (base + passo 8)
+ESCLUSIONI=""               # passi esclusi per decisione, separati da spazi, tra: 2 7.1 10.3 11.2 12.8

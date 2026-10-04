@@ -279,12 +279,15 @@ bash $D/passo9-manutenzione.sh --dry-run > /tmp/out.txt 2>&1; rc=$?
 cp -p /tmp/ops-maint.conf.salvato /etc/ops-maint.conf
 bash $D/passo3-cartelle.sh --rollback > /tmp/out.txt 2>&1; rc=$?
 [ "$rc" = 0 ] && [ ! -e /dati/dati ] && pass "passo3 --rollback: rimosse solo le cartelle create" || { bad "passo3 rollback (rc=$rc)"; cat /tmp/out.txt; }
-cp -p /tmp/host.conf.salvato /srv/ops/host.conf; rmdir /dati; rm -rf /var/lib/ops-bootstrap
+cp -p /tmp/host.conf.salvato /srv/ops/host.conf; rmdir /dati; rm -f /var/lib/ops-bootstrap/passo*.manifest
 t "host.conf ripristinato, repository pulito" bash -c "[ -z \"\$(runuser -u tester -- git -C /srv/ops status --porcelain)\" ]"
+
+# comando unico ops-installa, passo 5, rilevazione, esclusioni e regressioni della consegna 0.4.0 (T17–T23)
+. "$PKG/tests/installa-scenario.sh"
 
 echo "== T11 analisi statica (shellcheck -S warning)"
 apt-get install -y -qq shellcheck >/dev/null 2>&1
-for f in "$PKG/bootstrap.sh" "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/install-maint" "$PKG"/payload/ops/docs/bootstrap/*.sh; do
+for f in "$PKG/bootstrap.sh" "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/install-maint" "$PKG"/payload/ops/docs/bootstrap/*.sh "$PKG/payload/ops/docs/bootstrap/ops-installa"; do
   if shellcheck -S warning -x -P SCRIPTDIR "$f" > /tmp/sc.txt 2>&1; then pass "shellcheck ${f#$PKG/}"; else bad "shellcheck ${f#$PKG/}"; sed 's/^/   | /' /tmp/sc.txt | head -30; fi
 done
 

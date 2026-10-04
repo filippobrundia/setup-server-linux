@@ -20,6 +20,9 @@ warnings=0; errors=0
 ok()   { printf '  OK         %s\n' "$*"; }
 warn() { printf '  ATTENZIONE %s\n' "$*"; warnings=$((warnings + 1)); }
 fail() { printf '  ERRORE     %s\n' "$*"; errors=$((errors + 1)); }
+# passi esclusi per decisione (ESCLUSIONI in host.conf): mostrati, mai contati come superati né come attenzioni
+skip() { printf '  ESCLUSO    %s\n' "$*"; }
+excluded() { [[ " ${ESCLUSIONI:-} " == *" $1 "* ]]; }
 
 now=$(date +%s)
 hours_since() { echo $(( (now - $1) / 3600 )); }
@@ -122,7 +125,9 @@ else
       fail "ultimo run di borgmatic con errori (vedi $BORG_LOG)"
     fi
   fi
-  if [ -z "$OFFSITE" ]; then
+  if [ -z "$OFFSITE" ] && excluded 10.3; then
+    skip "copia remota (10.3 in ESCLUSIONI, host.conf)"
+  elif [ -z "$OFFSITE" ]; then
     warn "copia remota non configurata (OFFSITE vuoto in host.conf)"
   else
     off=$(last_cron_run "$OFFSITE_CRON_MATCH")
@@ -172,6 +177,8 @@ else
 fi
 if crontab -l 2>/dev/null | grep -q "$OPS/bin/heartbeat" && [ -s "$MONITOR_CFG/healthchecks-ping-url" ]; then
   ok "monitoraggio esterno attivo (Healthchecks, segnale ogni 5 minuti)"
+elif excluded 11.2; then
+  skip "monitoraggio esterno (11.2 in ESCLUSIONI, host.conf)"
 else
   warn "monitoraggio esterno non configurato (docs/runbooks/monitoraggio-esterno.md)"
 fi
