@@ -6,9 +6,9 @@ Versione: vedi `VERSION`.
 
 > **Stato: pre-release, non pronta per la produzione.** La 0.4.0 è stata collaudata su una VM pulita con
 > **Ubuntu Server 26.04.1 LTS** (Hyper-V), con esito "collaudo locale completato con esclusioni", ma con 29 richieste
-> di password e 8 script locali. La 0.5.0 integra le correzioni di quel collaudo e introduce il **comando unico**
-> `sudo ops-installa`; è provata in container (`ubuntu:24.04` e `ubuntu:26.04`, senza systemd). Da provare prima
-> della produzione: il flusso unico da zero su una VM pulita (sezione "Collaudo").
+> di password e 8 script locali. La 0.5.0 ha introdotto il **comando unico** `sudo ops-installa`, collaudato su una
+> VM 26.04.1 da zero con esito "collaudo locale completato con esclusioni (7.1 10.3 11.2 12.8); validazione per
+> produzione incompleta" e un difetto (D1). La 0.5.1 corregge D1. Prove ancora mancanti: sezione "Collaudo".
 
 ## Installazione (release identificata, integrità verificata)
 
@@ -16,19 +16,19 @@ Sulla macchina nuova, come **utente amministratore normale** creato dall'install
 non root), con l'impronta SHA-256 riportata nella pagina della release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.5.0/install.sh \
+curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.5.1/install.sh \
   | bash -s -- --sha256 <IMPRONTA> --check   # solo controllo: piano e conflitti, nessuna modifica
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.5.0/install.sh \
+curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.5.1/install.sh \
   | bash -s -- --sha256 <IMPRONTA>           # esecuzione (ripetibile)
 ```
 
-`install.sh` rifiuta root, scarica l'archivio della release `v0.5.0`, lo confronta con `SHA256SUMS` della release e
-con l'impronta passata a `--sha256`, lo estrae in `~/setup-server-linux-0.5.0` e avvia
+`install.sh` rifiuta root, scarica l'archivio della release `v0.5.1`, lo confronta con `SHA256SUMS` della release e
+con l'impronta passata a `--sha256`, lo estrae in `~/setup-server-linux-0.5.1` e avvia
 `sudo bootstrap.sh --admin <utente>` (sudo chiede la password). Claude Code e il suo login restano nell'account
 dell'amministratore. Opzione: `--owner "Nome"` (nome del proprietario usato nelle regole; di default il primo nome
 del campo GECOS).
 
-Alternativa manuale: scaricare `setup-server-linux-0.5.0.tar.gz` e `SHA256SUMS` dalla release,
+Alternativa manuale: scaricare `setup-server-linux-0.5.1.tar.gz` e `SHA256SUMS` dalla release,
 `sha256sum -c SHA256SUMS`, estrarre e lanciare `sudo ./bootstrap.sh --admin "$USER" [--check]`.
 
 Poi, in un **nuovo** terminale: `claude` → completare il login personale → un prompt all'agente (per esempio
@@ -49,6 +49,13 @@ L'agente legge gli esiti in `/var/log/ops-installa/` senza sudo; nessun output d
 
 Sistemi: Ubuntu Server LTS; collaudo su macchina reale con **Ubuntu 26.04** (VM), prove automatiche in container
 24.04 e 26.04. Su 26.04 il client NTP predefinito è chrony (accettato dalla checklist).
+
+## Novità della 0.5.1 (correzione D1 dal collaudo della 0.5.0, 2026-10-04)
+
+| Correzione | Dove |
+|---|---|
+| D1: `ops-installa` esegue gli script da una copia di root con file 0600; il passo 9 lanciava direttamente `"$MAINT_SRC/install-maint" status` → `Permission denied`, codice 126 dopo MODIFICA e VERIFY superati. Ora `bash "$MAINT_SRC/install-maint" status`; regola scritta accanto al `chmod 0600` | `passo9-manutenzione.sh`, `ops-installa` |
+| Test di regressione: controllo statico (nessun file della copia protetta eseguito direttamente) e passo 9 **reale** eseguito da `ops-installa` dalla copia 0600 (forma 0.5.0: codice 126; forma corretta: esito 0 e ripresa dal passo 9) | `tests/installa-scenario.sh` (T24) |
 
 ## Novità della 0.5.0 (comando unico e correzioni dal collaudo della 0.4.0, 2026-10-04)
 
@@ -160,8 +167,8 @@ verificato: va estratto con sudo, riletto e parametrizzato prima di includerlo).
 
 ## Collaudo
 
-**Fatto — in container (0.5.0).** `tests/run-container-test.sh` (Docker, container usa e getta senza systemd;
-`IMAGE=ubuntu:26.04` per la 26.04): **199/199 prove superate sia su `ubuntu:24.04` sia su `ubuntu:26.04`** (dopo la correzione del blocco della copia remota). Oltre alle prove della 0.4.0 (distribuzione, idempotenza,
+**Fatto — in container (0.5.1).** `tests/run-container-test.sh` (Docker, container usa e getta senza systemd;
+`IMAGE=ubuntu:26.04` per la 26.04): **203/203 prove superate sia su `ubuntu:24.04` sia su `ubuntu:26.04`** (0.5.0: 199/199). Oltre alle prove della 0.4.0 (distribuzione, idempotenza,
 conflitti, Knowledge Base, `quick-check`, logrotate, lettore di `host.conf`, passi 3, 9, 10 parziali, shellcheck),
 `tests/installa-scenario.sh` prova:
 - installazione di `ops-installa` e delle impronte di root da parte di `bootstrap.sh`; `--piano` senza sudo con tutti i
@@ -185,25 +192,28 @@ conflitti, Knowledge Base, `quick-check`, logrotate, lettore di `host.conf`, pas
   modificabili dall'amministratore.
 Gli script dei passi 6, 7, 8, 10, 10b e 12 richiedono systemd, APT e rete reali: in container solo controlli parziali.
 
-**Fatto — VM di laboratorio, 0.4.0** (Ubuntu Server 26.04.1, Hyper-V, installazione da zero, 2026-10-04): passi 0–12
-con gli script distribuiti, riavvio presidiato normale e controlli dopo l'avvio; difetti 1–8 della consegna (corretti
-in 0.5.0). Esclusi: 7.1, 2, 10.3, 12.3, 11.2 (provato sulla prima VM), manutenzione automatica, `ops-postboot`,
-`ops-maint attended`, 12.8. Esecuzione con 29 richieste di password e 8 script locali: il motivo della 0.5.0.
+**Fatto — VM di laboratorio, 0.5.0** (Ubuntu Server 26.04.1, Hyper-V Default Switch con DHCP, disco unico, profilo
+`docker` senza container, esclusioni 7.1 10.3 11.2 12.8; 2026-10-04, riferito dall'agente della VM): `sudo ops-installa`
+in 4 esecuzioni con esito "collaudo locale completato con esclusioni; validazione per produzione incompleta".
+Superati: guardia del terminale (piano non confermato senza terminale vero), passi 1–8 al primo tentativo, sosta del
+passo 7 con conferma da un nuovo login SSH, ripresa dal passo 9 dopo l'errore D1 (con `--dichiara-correzione`) senza
+ripetere 1–8, passi 9, 10, 10b, 11.1 (gate bloccato solo dalla copia remota esclusa), 12, riavvio da `ops-installa` e
+ripresa dopo l'avvio (12.4), 12.6, 12.7. Dopo il collaudo: unit di manutenzione disabilitate, `APPROVED=no`.
+Esito registrato anche nella Knowledge Base condivisa (privata).
+
+**Fatto — VM di laboratorio, 0.4.0** (2026-10-04): passi 0–12 con 29 richieste di password e 8 script locali; difetti
+1–8 corretti in 0.5.0.
 **Fatto — sul server di origine** (fisico, Ubuntu 24.04): scenario `kb` e prove sul repository GitHub reale (0.3.0).
 
-**Da provare prima della pubblicazione: flusso unico della 0.5.0 su una VM pulita Ubuntu Server 26.04** (bootstrap da
-`install.sh` o dall'archivio verificato, nessuna correzione manuale, nessuno script locale):
-1. `bootstrap.sh` → `ops-installa` in `/usr/local/sbin` e impronte in `/var/lib/ops-bootstrap`;
-2. agente: `rileva-parametri.sh`, una sola richiesta, `host.conf` con commit, `ops-installa --piano` pulito;
-3. `sudo ops-installa` da SSH: **una** password fino alla conferma del firewall nella stessa esecuzione (difetto 5
-   corretto: passo 7 con esito 0 su 26.04), riavvio con `RIAVVIA`, poi **una** password dopo l'avvio fino a
-   `STATO: COMPLETATO`; contare le richieste di password (atteso: 1 per bootstrap + 1 per esecuzione);
-4. ripresa: interrompere una volta (es. `dopo` alla conferma SSH, o un passo fatto fallire) e rilanciare;
-5. log: l'agente legge esiti e codici in `/var/log/ops-installa/` senza sudo; nessuna sospensione di apt (stato `T`);
-   eventuali richieste di debconf o needrestart nello pseudo-terminale (non osservate sulla VM, da registrare);
-6. profilo `docker` (passo 8) e, se possibile, `base` (12.5 con `disabled (routed)`);
-7. `--rollback 7` e `--dichiara-correzione` almeno una volta.
+**Non ancora provato su una macchina reale (0.5.x):**
+1. la 0.5.1 stessa (D1 corretto: passo 9 al primo tentativo);
+2. installazione dal percorso pubblico `install.sh` sulla VM (provato solo `--check` in container);
+3. interruzione volontaria di `ops-installa` durante un passo (Ctrl-C, chiusura di SSH) e ripresa;
+4. rollback reali: ripristino automatico di UFW scattato, `--rollback` di un passo, rollback di `/etc/ops-maint.conf`;
+5. rami di rifiuto di `--dichiara-correzione`; riavvio non avvenuto o controlli dopo l'avvio non superati;
+6. profilo `base` (12.5 con `disabled (routed)`); conteggio delle password sul percorso completo;
+7. richieste interattive di debconf o needrestart nello pseudo-terminale (non osservate).
 
 **Per la produzione servono inoltre:** rete stabile (7.1), volumi dedicati (2), copia remota con ripristino provato
-(10.3, 12.2 da remoto, 12.3), Healthchecks sulla 0.5.0 (11.2), `ops-maint attended` con `ops-postboot` e attivazione
-con prima esecuzione dei timer (12.8), `install.sh` dalla release pubblicata.
+(10.3, 12.2 da remoto, 12.3), Healthchecks (11.2), `ops-maint attended` con `ops-postboot`, attivazione e prima
+esecuzione della finestra e del timer `ops-cli-update` (12.8): tutte escluse nel collaudo della 0.5.0.

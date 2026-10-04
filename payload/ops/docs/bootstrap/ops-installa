@@ -181,6 +181,7 @@ verify_and_snapshot() {
     src=$OPS/$rel
     if [ -L "$src" ] || [ ! -f "$src" ]; then mism+=("$rel (assente o non regolare)"); continue; fi
     install -d -o root -g root -m 0700 "$SNAP/$(dirname "$rel")"
+    # copia 0600, senza bit di esecuzione: ogni file della copia si lancia SEMPRE come "bash <file>" (difetto D1)
     cp -- "$src" "$SNAP/$rel"; chmod 0600 "$SNAP/$rel"
     got=$(sha "$SNAP/$rel")   # impronta della COPIA che verrà eseguita
     [ "$got" = "$want" ] && continue

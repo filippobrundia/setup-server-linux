@@ -312,3 +312,47 @@ rc=$(oi 'SI\n')
   && grep -q '10.3 in ESCLUSIONI: la copia remota mancante blocca finestra e ops-maint attended, aggiungere anche 12.8' $IT/out.txt \
   && pass "parametri incompleti: elenco unico, nessun passo (esito 3)" || { bad "parametri (rc=$rc)"; tail -8 $IT/out.txt; }
 rm -rf $IT /tmp/it-dati
+
+echo "== T24 difetto D1: file della copia protetta 0600 eseguiti direttamente (passo 9 reale sotto ops-installa)"
+# prova statica: nessun file di $SNAP/$P/$MAINT_SRC/$TEMPLATES/... lanciato direttamente (senza "bash")
+chk='(^|[;&|(]|then|do|else)[[:space:]]*"\$(MAINT_SRC|TEMPLATES|OPS_TEMPLATES|OPS_MAINT_DIR|SNAP|P)/'
+hits=$(grep -rnE "$chk" "$PKG/payload/ops/docs/bootstrap" || true)
+[ -z "$hits" ] && pass "D1 statico: nessuna esecuzione diretta dalla copia protetta" || { bad "D1 statico:"; echo "$hits"; }
+# prova dinamica: passo9 REALE, copiato da ops-installa in $SNAP con file 0600
+IT=/tmp/it9; rm -rf $IT; mkdir -p $IT/srv $IT/fakebin $IT/var/lib/ops-maint/inbox $IT/var/run /tmp/it-dati
+cp -a /srv/ops $IT/srv/ops
+STUB9='#!/bin/bash
+n=$(basename "$0"); echo "$n${*:+ $*}" >> "$OPS_INSTALLA_TEST_ROOT/calls"; exit 0'
+for s in passo10-backup passo10b-rotazione-verifica passo12-verifiche verifiche-base; do printf '%s\n' "$STUB9" > $IT/srv/ops/docs/bootstrap/$s.sh; done
+# install-maint resta quello reale: passo 9 lo lancia dalla copia protetta
+chown -R tester:tester $IT/srv/ops
+# systemctl simulato: unità richieste abilitate, unit ops-* disabilitate, riavvio solo registrato
+printf '#!/bin/bash\ncase "$*" in\n  "is-enabled --quiet "*) exit 0 ;;\n  "is-enabled "*) echo disabled ;;\n  reboot) echo "systemctl reboot" >> "$OPS_INSTALLA_TEST_ROOT/calls" ;;\n  *) exit 0 ;;\nesac\n' > $IT/fakebin/systemctl
+chmod +x $IT/fakebin/systemctl; echo boot-1 > $IT/boot_id
+HC=$IT/srv/ops/host.conf
+sed -i 's|^LAN_CIDR=.*|LAN_CIDR="10.0.0.0/24"|; s|^DATA_MOUNT=.*|DATA_MOUNT="/tmp/it-dati"|; s|^SERVICES=.*|SERVICES="ssh cron ufw fail2ban"|; s|^PROFILO=.*|PROFILO="base"|; s|^ESCLUSIONI=.*|ESCLUSIONI="2 7.1 10.3 11.2 12.8"|' $HC
+cp -p /etc/ops-maint.conf /tmp/ops-maint.conf.d1
+p9() { runuser -u tester -- cp "$1" $IT/srv/ops/docs/bootstrap/passo9-manutenzione.sh; runuser -u tester -- git -C $IT/srv/ops commit -qam "prova: passo9" >/dev/null 2>&1 || true; reref; }
+state0() { rm -rf $IT/var/lib/ops-bootstrap/installa.state $IT/var/log/ops-installa $IT/calls; install -d -m 0700 $IT/var/lib/ops-bootstrap
+  install -m 0600 /dev/null $IT/var/lib/ops-bootstrap/installa.state
+  for id in 0 1 3 4 5 6 7 8; do echo "$id fatto 2026-10-04T00:00:00Z prova" >> $IT/var/lib/ops-bootstrap/installa.state; done; }
+git -C "$PKG" show 9acfc41:payload/ops/docs/bootstrap/passo9-manutenzione.sh > /tmp/passo9-050.sh 2>/dev/null || cp "$PKG/payload/ops/docs/bootstrap/passo9-manutenzione.sh" /tmp/passo9-050.sh
+grep -q '^"\$MAINT_SRC/install-maint" status' /tmp/passo9-050.sh || sed -i 's|^bash "\$MAINT_SRC/install-maint" status|"$MAINT_SRC/install-maint" status|' /tmp/passo9-050.sh
+chmod a+r /tmp/passo9-050.sh
+# 1) forma 0.5.0: codice 126 dopo MODIFICA e VERIFY superati
+runuser -u tester -- git -C $IT/srv/ops commit -qam "prova: parametri" >/dev/null 2>&1 || true
+state0; p9 /tmp/passo9-050.sh
+rc=$(oi 'SI\n')
+f=$(ls $IT/var/log/ops-installa/ultimo/*-9.log 2>/dev/null | tail -1)
+[ "$rc" = 1 ] && grep -qE '^9 errore ' $IT/var/lib/ops-bootstrap/installa.state && grep -q 'codice di uscita: 126' "$f" && grep -q 'Permission denied' "$f" \
+  && grep -q 'ok  REQUIRED_UNITS=' "$f" && ! grep -q passo10 $IT/calls 2>/dev/null \
+  && pass "D1 riprodotto: passo 9 della 0.5.0 dalla copia 0600 → Permission denied, codice 126 dopo MODIFICA e VERIFY" || { bad "D1 riproduzione (rc=$rc)"; tail -8 "$f" 2>/dev/null; tail -5 $IT/out.txt; }
+t "copia protetta rimossa a fine esecuzione" bash -c "[ -z \"\$(ls -A $IT/run/ops-installa 2>/dev/null)\" ]"
+# 2) forma corretta (pacchetto attuale): ripresa dal passo 9 senza ripetere 1–8, PRECHECK trova il valore già scritto
+p9 "$PKG/payload/ops/docs/bootstrap/passo9-manutenzione.sh"; : > $IT/calls
+rc=$(oi 'dopo\n')
+f=$(ls $IT/var/log/ops-installa/ultimo/*-9.log | tail -1)
+[ "$rc" = 5 ] && grep -qE '^9 fatto ' $IT/var/lib/ops-bootstrap/installa.state && grep -q 'codice di uscita: 0' "$f" && grep -q 'ops-postboot.service' "$f" \
+  && grep -q 'REQUIRED_UNITS già al valore previsto' $(ls $IT/var/log/ops-installa/ultimo/*-9-dry-run.log) && grep -q '^passo10-backup.sh --dry-run' $IT/calls \
+  && pass "D1 corretto: passo 9 reale dalla copia 0600 con esito 0 (install-maint status stampato), ripresa senza ripetere 1–8" || { bad "D1 corretto (rc=$rc)"; tail -8 "$f"; tail -5 $IT/out.txt; }
+cp -p /tmp/ops-maint.conf.d1 /etc/ops-maint.conf; rm -f /etc/ops-maint.conf.bak-* /tmp/passo9-050.sh; rm -rf $IT /tmp/it-dati

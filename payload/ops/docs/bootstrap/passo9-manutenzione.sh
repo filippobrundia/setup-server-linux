@@ -90,6 +90,6 @@ rc=0; out=$(DRY_RUN=1 "$MAINT" window 2>&1) || rc=$?
 echo "$out" | sed 's/^/  /'
 [ "$rc" -eq 0 ] && ! grep -qiE 'non valido|deve essere|manca ' <<<"$out" && ok "DRY_RUN=1 ops-maint window: nessun errore di parametri" || ko "DRY_RUN window: codice $rc"
 [ "$(sha256sum < "$STATE/history.log")" = "$h0" ] && [ ! -e "$STATE/hold" ] && ok "dry-run senza scritture nello stato (history.log invariato, nessun hold)" || ko "il dry-run ha scritto nello stato"
-"$MAINT_SRC/install-maint" status 2>&1 | sed 's/^/  /'
+bash "$MAINT_SRC/install-maint" status 2>&1 | sed 's/^/  /'
 echo "ESITO PASSO 9=$bad"
 exit $bad
