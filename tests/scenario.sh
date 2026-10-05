@@ -282,6 +282,9 @@ bash $D/passo3-cartelle.sh --rollback > /tmp/out.txt 2>&1; rc=$?
 cp -p /tmp/host.conf.salvato /srv/ops/host.conf; rmdir /dati; rm -f /var/lib/ops-bootstrap/passo*.manifest
 t "host.conf ripristinato, repository pulito" bash -c "[ -z \"\$(runuser -u tester -- git -C /srv/ops status --porcelain)\" ]"
 
+# Knowledge Base facoltativa via HTTPS: server di prova locale e token fittizi (K0–K8, prove simulate)
+. "$PKG/tests/kb-https-scenario.sh"
+
 # comando unico ops-installa, passo 5, rilevazione, esclusioni e regressioni della consegna 0.4.0 (T17–T23)
 . "$PKG/tests/installa-scenario.sh"
 

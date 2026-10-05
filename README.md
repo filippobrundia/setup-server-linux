@@ -8,7 +8,8 @@ Versione: vedi `VERSION`.
 > **Ubuntu Server 26.04.1 LTS** (Hyper-V), con esito "collaudo locale completato con esclusioni", ma con 29 richieste
 > di password e 8 script locali. La 0.5.0 ha introdotto il **comando unico** `sudo ops-installa`, collaudato su una
 > VM 26.04.1 da zero con esito "collaudo locale completato con esclusioni (7.1 10.3 11.2 12.8); validazione per
-> produzione incompleta" e un difetto (D1). La 0.5.1 corregge D1. Prove ancora mancanti: sezione "Collaudo".
+> produzione incompleta" e un difetto (D1). La 0.5.1 corregge D1; la 0.6.0 rende la Knowledge Base facoltativa, con
+> repository scelto dall'utente e lettura via HTTPS. Prove ancora mancanti: sezione "Collaudo".
 
 ## Installazione (release identificata, integrità verificata)
 
@@ -16,19 +17,19 @@ Sulla macchina nuova, come **utente amministratore normale** creato dall'install
 non root), con l'impronta SHA-256 riportata nella pagina della release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.5.1/install.sh \
+curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.6.0/install.sh \
   | bash -s -- --sha256 <IMPRONTA> --check   # solo controllo: piano e conflitti, nessuna modifica
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.5.1/install.sh \
+curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.6.0/install.sh \
   | bash -s -- --sha256 <IMPRONTA>           # esecuzione (ripetibile)
 ```
 
-`install.sh` rifiuta root, scarica l'archivio della release `v0.5.1`, lo confronta con `SHA256SUMS` della release e
-con l'impronta passata a `--sha256`, lo estrae in `~/setup-server-linux-0.5.1` e avvia
+`install.sh` rifiuta root, scarica l'archivio della release `v0.6.0`, lo confronta con `SHA256SUMS` della release e
+con l'impronta passata a `--sha256`, lo estrae in `~/setup-server-linux-0.6.0` e avvia
 `sudo bootstrap.sh --admin <utente>` (sudo chiede la password). Claude Code e il suo login restano nell'account
 dell'amministratore. Opzione: `--owner "Nome"` (nome del proprietario usato nelle regole; di default il primo nome
 del campo GECOS).
 
-Alternativa manuale: scaricare `setup-server-linux-0.5.1.tar.gz` e `SHA256SUMS` dalla release,
+Alternativa manuale: scaricare `setup-server-linux-0.6.0.tar.gz` e `SHA256SUMS` dalla release,
 `sha256sum -c SHA256SUMS`, estrarre e lanciare `sudo ./bootstrap.sh --admin "$USER" [--check]`.
 
 Poi, in un **nuovo** terminale: `claude` → completare il login personale → un prompt all'agente (per esempio
@@ -49,6 +50,15 @@ L'agente legge gli esiti in `/var/log/ops-installa/` senza sudo; nessun output d
 
 Sistemi: Ubuntu Server LTS; collaudo su macchina reale con **Ubuntu 26.04** (VM), prove automatiche in container
 24.04 e 26.04. Su 26.04 il client NTP predefinito è chrony (accettato dalla checklist).
+
+## Novità della 0.6.0 (Knowledge Base facoltativa via HTTPS, 2026-10-05)
+
+| Novità | Dove |
+|---|---|
+| Nessun repository KB predefinito; domanda "Vuoi collegare una Knowledge Base? [S/N]" durante l'avvio, URL HTTPS, prova senza credenziali, token di sola lettura con input nascosto solo se serve; correzione, riprova o rinuncia senza reinstallare la foundation; scelta registrata (nessuna domanda ripetuta) | `bootstrap.sh`, `bin/kb` (`kb collega`), `kb.conf` |
+| Token fuori dai repository (0700/0600), consegnato a git solo dall'helper `kb credenziale`; escluso dai backup; `kb token` per sostituirlo; token scaduto o revocato = copia conservata e "ACCESSO NEGATO" senza interrompere la gestione | `bin/kb`, modello di borgmatic |
+| Lettura via HTTPS e pubblicazione separate: `kb publish` rifiutato sui server HTTPS; deploy key e SSH delle installazioni esistenti invariati | `bin/kb`, `bootstrap.sh` |
+| `--no-kb`, `--kb-url` in `bootstrap.sh` e `install.sh`; guida al token | `install.sh`, `docs/runbooks/knowledge-base.md`, `AGENTS.md` |
 
 ## Novità della 0.5.1 (correzione D1 dal collaudo della 0.5.0, 2026-10-04)
 
@@ -87,38 +97,45 @@ Sistemi: Ubuntu Server LTS; collaudo su macchina reale con **Ubuntu 26.04** (VM)
 Le scelte della VM di laboratorio (reti private al posto di `LAN_CIDR`, `"ip": "127.0.0.1"` in `daemon.json`,
 `source_directories_must_exist`, layout a disco unico, valori fissi di `REQUIRED_UNITS`) **non** sono trasferite.
 
-## Knowledge Base condivisa tra server
+## Knowledge Base (facoltativa)
 
-La conoscenza tecnica verificata sta in un **repository separato e condiviso**,
-`filippobrundia/server-knowledge-base` (privato), con copia locale in `/srv/ops/knowledge-base` gestita dallo
-strumento della foundation `/srv/ops/bin/kb`. Ogni server la consulta prima di intervenire e aggiunge ciò che impara
-come **record** indipendenti (APPEND ONLY); le regole per gli amministratori sono in `AGENTS.md` (SYNC BEFORE WORK,
-KNOWLEDGE FIRST, LEARN & CONSOLIDATE, VERIFY BEFORE PUBLISH, APPEND ONLY).
+Una Knowledge Base tecnica, cioè un **repository Git separato scelto dall'utente** (nessun repository predefinito), può
+essere collegata alla foundation: copia locale in `/srv/ops/knowledge-base`, gestita da `/srv/ops/bin/kb`, regole per
+gli amministratori in `AGENTS.md` (SYNC BEFORE WORK, KNOWLEDGE FIRST, LEARN & CONSOLIDATE, VERIFY BEFORE PUBLISH, APPEND
+ONLY). Senza KB la foundation funziona normalmente.
+
+**Durante l'avvio** il bootstrap chiede `Vuoi collegare una Knowledge Base? [S/N]`:
+- **N**: "KB non configurata per scelta" (registrato in `kb.conf`; la domanda non viene ripetuta);
+- **S**: URL HTTPS del repository. Prima prova **senza credenziali** (repository pubblico); se serve autenticazione
+  chiede un **token di sola lettura** con input nascosto (mai la password dell'account). Se l'accesso non riesce:
+  correggere l'URL, reinserire il token, riprovare o continuare senza KB, senza reinstallare la foundation. Con
+  l'accesso verificato scarica la copia e attiva la sincronizzazione ogni 6 ore.
+- Opzioni non interattive: `--no-kb`, `--kb-url https://…` (anche da `install.sh`). Più tardi, senza sudo:
+  `/srv/ops/bin/kb collega`.
+
+**Token** (GitHub: *fine-grained personal access token* limitato al solo repository della KB, **Contents:
+Read-only**, più Metadata read-only aggiunto da GitHub): si crea una volta, si conserva nel gestore di password e si
+incolla sui server. Sul server sta in `~/.config/ops-kb/token` dell'amministratore (cartella 0700, file 0600), fuori dai
+repository e dai backup; git lo riceve solo dall'helper `kb credenziale`, mai da URL, argomenti, log, crontab o commit.
+Scaduto o revocato: `kb sync` lo segnala ("ACCESSO NEGATO"), conserva la copia locale ed esce con 0; si sostituisce con
+`kb token`, che verifica il nuovo accesso prima di salvarlo. Lo stesso token su più macchine va sostituito su tutte.
+Guida: `docs/runbooks/knowledge-base.md`.
 
 | Comando | Effetto |
 |---|---|
-| `kb sync` | recupera i record degli altri server; non tocca il lavoro locale; senza rete usa la copia locale (e lo dichiara); mai modifiche ai programmi installati, mai esecuzione di script della KB |
-| `kb new "Titolo"` → `kb validate` → `kb publish` | nuovo record `RECORD-<data>-<server>-<casuale>`: metadati e sezioni obbligatorie, collegamenti, assenza di segreti e di dati riservati, pura aggiunta, recupero degli altri, push senza force (se respinto: recupero e nuovo tentativo) |
-| `kb status`, `kb index`, `kb search` | stato della copia, indice locale dei record (non versionato), ricerca |
+| `kb collega`, `kb token` | collegamento facoltativo via HTTPS; sostituzione del token di lettura |
+| `kb sync` | recupera i record; non tocca il lavoro locale; senza rete o con accesso negato usa la copia locale (e lo dichiara); mai modifiche ai programmi installati, mai esecuzione di script della KB |
+| `kb new "Titolo"` → `kb validate` → `kb publish` | nuovo record APPEND ONLY; la **pubblicazione** è riservata ai server con scrittura autorizzata (collegamento SSH): un server collegato via HTTPS legge soltanto |
+| `kb status`, `kb index`, `kb search` | stato della copia (con l'ultimo errore di accesso), indice locale dei record, ricerca |
 | `kb schedule on` | sincronizzazione leggera ogni 6 ore (crontab dell'amministratore) |
 
-**Primo recupero su un server nuovo (repository privato).** Il bootstrap crea una **deploy key** del server
-(`~/.ssh/kb_deploy`), verifica la chiave host di GitHub e tenta `kb init`. Senza autorizzazione o senza rete si
-ferma con **esito 4** e il messaggio "KNOWLEDGE BASE NON RECUPERATA", stampando la chiave pubblica: il proprietario la
-registra nel repository (Settings → Deploy keys; con scrittura solo se il server deve pubblicare), poi
-`/srv/ops/bin/kb init` oppure `sudo bootstrap.sh --admin <utente> --knowledge-base-only`. Nessun token nel pacchetto.
-
-`--knowledge-base-only` aggiorna solo strumento, configurazione e copia della Knowledge Base (nessun pacchetto,
-agente, home o manutenzione). Opzioni: `--kb-remote URL`, `--kb-id NOME` (nome tecnico non sensibile del server).
-Una copia incorporata della versione 0.2.0 viene spostata in `knowledge-base.v0.2.0-<data>` (conservata).
+**Compatibilità.** Le installazioni precedenti con deploy key continuano a funzionare com'erano; `--kb-remote` con un
+URL SSH o un percorso locale usa ancora quel collegamento. `--knowledge-base-only` aggiorna solo strumento,
+configurazione e copia della KB (e ripropone il collegamento se era stato rifiutato). Una copia incorporata della 0.2.0
+viene spostata in `knowledge-base.v0.2.0-<data>` (conservata).
 
 Il pacchetto ricrea la **foundation e la sua conoscenza**, non le applicazioni: nessuna installazione automatica di
-ciò che la Knowledge Base descrive. Dati, segreti e configurazione per ripristinare una specifica istanza restano
-nei backup e nei repository del relativo progetto.
-
-**Protezione lato GitHub.** Con il piano gratuito un repository privato non ammette regole di protezione del ramo:
-le modifiche distruttive sono impedite dallo strumento `kb` e dall'hook `pre-push` di ogni copia, mentre il workflow
-`append-only` del repository le **rileva** e le segnala (non può impedirle).
+ciò che la Knowledge Base descrive.
 
 ## Requisito Node.js
 
@@ -156,7 +173,7 @@ identici si saltano, quelli del pacchetto non modificati si aggiornano, quelli c
 | `payload/home/` | adattatori per la home dell'amministratore |
 | `payload/ops/bin/kb`, `payload/ops/kb.conf.tmpl` | strumento e configurazione della Knowledge Base condivisa |
 | `tests/kb-scenario.sh` | collaudo dello strumento kb con un repository remoto fittizio e due copie |
-| `tests/` | collaudo in container (`run-container-test.sh`, `scenario.sh`, `installa-scenario.sh` per il comando unico) |
+| `tests/` | collaudo in container (`run-container-test.sh`, `scenario.sh`, `installa-scenario.sh` per il comando unico, `kb-https-scenario.sh` e `kb-https-server.py` per la KB via HTTPS, simulata) |
 
 Differenze rispetto al server di origine (solo parametrizzazione): nomi fissi `ops-*` al posto di `servern100-*`,
 parametri della macchina in `/srv/ops/host.conf` (utente) e `/etc/ops-maint.conf` (root, letto senza eseguirlo),
@@ -167,8 +184,14 @@ verificato: va estratto con sudo, riletto e parametrizzato prima di includerlo).
 
 ## Collaudo
 
-**Fatto — in container (0.5.1).** `tests/run-container-test.sh` (Docker, container usa e getta senza systemd;
-`IMAGE=ubuntu:26.04` per la 26.04): **203/203 prove superate sia su `ubuntu:24.04` sia su `ubuntu:26.04`** (0.5.0: 199/199). Oltre alle prove della 0.4.0 (distribuzione, idempotenza,
+**Fatto — in container (0.6.0).** `tests/run-container-test.sh` (Docker, container usa e getta senza systemd;
+`IMAGE=ubuntu:26.04` per la 26.04): **241/241 prove superate sia su `ubuntu:24.04` sia su `ubuntu:26.04`** (0.5.1: 203/203). `tests/kb-https-scenario.sh` (prove SIMULATE: server
+Git HTTPS locale con certificato di prova, token fittizi, nessun accesso a GitHub): nessuna KB (N, `--no-kb`, nessun
+terminale), repository pubblico, privato con token, token errato con reinserimento, URL errato con correzione, URL con
+credenziali rifiutato, riprova e rinuncia, sincronizzazione successiva senza terminale, token revocato (copia
+conservata, esito 0), sostituzione con `kb token` (anche errata), `kb publish` rifiutato via HTTPS, helper che non
+risponde ad altri host, token assente da configurazioni, log, URL, crontab, commit e argomenti dei processi
+(`GIT_TRACE`), bootstrap con le domande all'avvio e senza ripetizioni. Oltre alle prove della 0.4.0 (distribuzione, idempotenza,
 conflitti, Knowledge Base, `quick-check`, logrotate, lettore di `host.conf`, passi 3, 9, 10 parziali, shellcheck),
 `tests/installa-scenario.sh` prova:
 - installazione di `ops-installa` e delle impronte di root da parte di `bootstrap.sh`; `--piano` senza sudo con tutti i
@@ -205,8 +228,9 @@ Esito registrato anche nella Knowledge Base condivisa (privata).
 1–8 corretti in 0.5.0.
 **Fatto — sul server di origine** (fisico, Ubuntu 24.04): scenario `kb` e prove sul repository GitHub reale (0.3.0).
 
-**Non ancora provato su una macchina reale (0.5.x):**
-1. la 0.5.1 stessa (D1 corretto: passo 9 al primo tentativo);
+**Non ancora provato su una macchina reale:** collegamento della KB 0.6.0 a GitHub reale (repository pubblico e privato
+con un fine-grained token vero), scadenza o revoca reale del token, sincronizzazione dal cron; inoltre (0.5.x):
+1. la 0.5.1/0.6.0 su una VM (D1 corretto: passo 9 al primo tentativo);
 2. installazione dal percorso pubblico `install.sh` sulla VM (provato solo `--check` in container);
 3. interruzione volontaria di `ops-installa` durante un passo (Ctrl-C, chiusura di SSH) e ripresa;
 4. rollback reali: ripristino automatico di UFW scattato, `--rollback` di un passo, rollback di `/etc/ops-maint.conf`;

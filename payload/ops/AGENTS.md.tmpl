@@ -111,11 +111,18 @@ chiedergli come risolvere tecnicamente il problema.
 Valgono per gli assistenti tecnici e amministratori del server, **non** per gli agenti applicativi (per esempio i
 dipendenti di un'azienda di agenti), che seguono le regole dei rispettivi progetti.
 
-La Knowledge Base è un **repository Git separato e condiviso tra server**, con copia locale in `knowledge-base/`
-(non versionata in questa foundation), gestita da `bin/kb` (configurazione `kb.conf`: repository, nome tecnico del
-server, deploy key). Se non è ancora stata recuperata: `bin/kb init` (vedi `kb.conf` e la deploy key del server).
+La Knowledge Base è **facoltativa**: un repository Git separato, scelto da @@OWNER@@, con copia locale in
+`knowledge-base/` (non versionata in questa foundation), gestita da `bin/kb` (configurazione `kb.conf`). Il
+collegamento si decide all'avvio del bootstrap (`kb collega`); se `kb.conf` dice `KB_SCELTA="no"` la KB non è
+configurata per scelta: le regole sotto non si applicano e non si ripropone il collegamento. Lettura via HTTPS, con un
+token di sola lettura se il repository è privato: il token sta in `~/.config/ops-kb/token` (0600) e **non va mai
+letto, stampato, copiato o spostato** dagli agenti. Se `kb sync` segnala "ACCESSO NEGATO" (token scaduto o revocato),
+la copia locale resta valida: dirlo a @@OWNER@@ e chiedergli di eseguire in un terminale vero `/srv/ops/bin/kb token`.
+Da un server collegato via HTTPS non si pubblicano record (`kb publish` lo rifiuta): la scrittura è riservata ai
+server autorizzati.
 
-**SYNC BEFORE WORK.** All'inizio di ogni incarico tecnico eseguire `bin/kb sync`. Senza rete si consulta la copia
+**SYNC BEFORE WORK.** All'inizio di ogni incarico tecnico eseguire `bin/kb sync` (se la KB non è configurata lo dice
+ed esce con 0). Senza rete si consulta la copia
 locale dichiarando che potrebbe non essere aggiornata. La sincronizzazione non modifica mai i programmi installati e
 non esegue script della Knowledge Base.
 
@@ -173,7 +180,7 @@ registrali allo stesso modo prima di chiudere.
 | `docs/future-improvements.md` | Miglioramenti possibili, non attivi e non bloccanti |
 | `docs/runbooks/` | Procedure operative (controllo rapido, manutenzione, monitoraggio, …) |
 | `knowledge-base/` | Copia locale del repository condiviso della Knowledge Base (APPEND ONLY; non versionata qui) |
-| `bin/kb`, `kb.conf` | Strumento e configurazione della Knowledge Base condivisa |
+| `bin/kb`, `kb.conf` | Strumento e configurazione della Knowledge Base facoltativa (`kb collega`, `kb token`; runbook `docs/runbooks/knowledge-base.md`) |
 | `bin/quick-check` | Controllo rapido dello stato del server (sola lettura) |
 | `maint/`, `bin/cli-update`, `bin/maint-approve` | Manutenzione automatica: sorgenti, unit, `install-maint`, modelli (`docs/runbooks/manutenzione.md`) |
 

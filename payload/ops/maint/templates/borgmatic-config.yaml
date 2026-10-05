@@ -20,7 +20,8 @@ source_directories:
   - /usr/local/bin
   - /etc/ops-maint.conf                     # parametri della manutenzione (sorgenti di script e unit: /srv/ops)
   # dati e configurazioni non sensibili dei servizi: aggiungere qui
-exclude_patterns: []
+exclude_patterns:
+  - /home/*/.config/ops-kb              # token di lettura della Knowledge Base: mai nei backup
   # file dei servizi che contengono segreti: aggiungere qui
 # before_backup:
 #   - /usr/local/bin/sqlite-snapshots.sh       # solo con database SQLite (script da estrarre, vedi README)

@@ -1,9 +1,13 @@
-# Configurazione dello strumento kb (Knowledge Base condivisa tra server). Nessuna credenziale qui: solo il percorso
-# della deploy key del server. Nome del server: tecnico e non sensibile (compare nei record pubblicati).
+# Configurazione dello strumento kb (Knowledge Base FACOLTATIVA, repository scelto dall'utente). Nessuna credenziale
+# qui: solo URL, scelte e percorsi. Il collegamento si fa con "kb collega" (anche durante il bootstrap); il token di
+# lettura sta in KB_TOKEN_FILE (cartella 0700, file 0600, fuori dai repository e dai backup) e si sostituisce con
+# "kb token". Nome del server: tecnico e non sensibile (compare nei record pubblicati).
 KB_DIR=/srv/ops/knowledge-base
-KB_REMOTE=@@KB_REMOTE@@
+KB_SCELTA=""                # "" = non ancora chiesto | si | no (non configurata per scelta)
+KB_REMOTE="@@KB_REMOTE@@"   # URL HTTPS del repository (vuoto = nessuna Knowledge Base)
 KB_BRANCH=main
 KB_SERVER_ID=@@KB_SERVER_ID@@
-KB_SSH_KEY=@@AHOME@@/.ssh/kb_deploy
+KB_TOKEN_FILE=""            # file del token di lettura, solo se il repository è privato
+KB_SSH_KEY="@@KB_SSH_KEY@@" # solo installazioni con deploy key (versioni precedenti)
 # File locale (non pubblicato) con stringhe riservate di questo server da non pubblicare mai, una per riga.
 KB_PRIVATE_PATTERNS=/srv/ops/kb-private-patterns.txt

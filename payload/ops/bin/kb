@@ -11,9 +11,14 @@
 #   kb index                 rigenera l'indice locale dei record (.kb-index.md, non versionato)
 #   kb search TESTO          cerca in tutta la KB
 #   kb schedule on|off       sincronizzazione periodica leggera (crontab dell'utente, ogni 6 ore)
+#   kb collega [--url URL|--no]  collegamento FACOLTATIVO via HTTPS: prova senza credenziali, poi chiede un token
+#                            (input nascosto); scelta registrata in kb.conf, nessuna domanda ripetuta
+#   kb token                 sostituisce il token di lettura: verifica il nuovo accesso, poi sincronizza
 #
 # Configurazione: /srv/ops/kb.conf (KB_DIR, KB_REMOTE, KB_BRANCH, KB_SERVER_ID, KB_SSH_KEY, KB_PRIVATE_PATTERNS).
-# Credenziali: deploy key del server (KB_SSH_KEY), mai nei file della KB, negli script o nei log.
+# Credenziali: token di lettura HTTPS in KB_TOKEN_FILE (~/.config/ops-kb/token, cartella 0700, file 0600, fuori dai
+# repository e dai backup) passato a git solo dall'helper "kb credenziale"; installazioni precedenti: deploy key
+# (KB_SSH_KEY). Mai nei file della KB, negli URL, negli argomenti, nei log, nel crontab o nei commit.
 set -uo pipefail
 CONF=${KB_CONF:-/srv/ops/kb.conf}
 # shellcheck disable=SC1090
@@ -23,7 +28,11 @@ KB_REMOTE=${KB_REMOTE:-}
 KB_BRANCH=${KB_BRANCH:-main}
 KB_SERVER_ID=${KB_SERVER_ID:-}
 KB_SSH_KEY=${KB_SSH_KEY:-}
+KB_TOKEN_FILE=${KB_TOKEN_FILE:-}
+KB_SCELTA=${KB_SCELTA:-}
 KB_PRIVATE_PATTERNS=${KB_PRIVATE_PATTERNS:-}
+SELF=$(readlink -f "$0")
+TOKEN_DEFAULT="$HOME/.config/ops-kb/token"   # fuori dai repository e dai backup della foundation
 TIMEOUT=${KB_TIMEOUT:-30}
 QUIET=0
 say()  { [ "$QUIET" = 1 ] || echo "$*"; }
@@ -40,6 +49,32 @@ set_identity() {  # identità tecnica non personale per i commit e i rebase dell
   [ -n "$KB_SSH_KEY" ] && g config core.sshCommand "ssh -i $KB_SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes" || true
 }
 remote_git() { timeout $((TIMEOUT * 4)) git -C "$KB_DIR" "$@"; }
+is_https() { [[ "$1" == https://* ]]; }
+# Credenziale HTTPS: solo tramite l'helper "kb credenziale" (legge il file 0600 e la passa a git sulla pipe dell'helper).
+# Mai nell'URL, negli argomenti dei processi, nell'ambiente, nei log o nel crontab. credential.helper vuoto azzera
+# eventuali helper globali (es. store), così il token non viene copiato altrove e git non chiede mai una password.
+auth_args() {  # $1 = file del token (vuoto: accesso anonimo)
+  if [ -n "$1" ]; then printf '%s\n' -c credential.helper= -c "credential.helper=!$SELF credenziale"
+  else printf '%s\n' -c credential.helper=; fi
+}
+set_credential() {  # configurazione locale della copia (nessun segreto: solo il comando dell'helper)
+  is_https "$KB_REMOTE" || return 0
+  g config --unset-all credential.helper 2>/dev/null || true
+  g config --add credential.helper ""
+  [ -n "$KB_TOKEN_FILE" ] && g config --add credential.helper "!$SELF credenziale"
+  return 0
+}
+not_configured() { say "Knowledge Base non configurata${KB_SCELTA:+ per scelta} (per collegarla: kb collega)"; exit 0; }
+access_reason() {  # $1 = stderr di git: motivo leggibile, senza riportare l'output
+  case $1 in
+    *"Repository not found"*|*"not found"*|*" 404"*) echo "repository inesistente o non accessibile con questa credenziale (URL errato o token senza accesso al repository)" ;;
+    *"Authentication failed"*|*"Invalid username"*|*"could not read Username"*|*"terminal prompts disabled"*|*" 401"*|*" 403"*)
+      echo "accesso negato (serve un token, oppure il token è errato, scaduto o revocato)" ;;
+    *"Could not resolve host"*|*"Failed to connect"*|*"timed out"*|*"Connection refused"*|*"SSL"*|*"certificate"*) echo "repository non raggiungibile (rete, nome host o certificato)" ;;
+    *) echo "accesso non riuscito" ;;
+  esac
+}
+is_auth_error() { case $(access_reason "$1") in "accesso negato"*|"repository inesistente"*) return 0 ;; esac; return 1; }
 STATE() { echo "$KB_DIR/.git/kb-state"; }
 
 RECORD_RE='^RECORD-[0-9]{8}-[a-z0-9][a-z0-9-]{0,23}-[0-9a-f]{6}$'
@@ -126,28 +161,41 @@ cmd_index() {
   say "indice: $(grep -c '^| \[RECORD' "$out") record in ${out#$KB_DIR/}"
 }
 cmd_init() {
-  [ -n "$KB_REMOTE" ] || die "KB_REMOTE non impostato in $CONF"
-  if [ -d "$KB_DIR/.git" ]; then say "copia già presente in $KB_DIR"; set_identity; install_hook; cmd_index; return 0; fi
+  [ -n "$KB_REMOTE" ] || not_configured
+  if [ -d "$KB_DIR/.git" ]; then say "copia già presente in $KB_DIR"; set_identity; set_credential; install_hook; cmd_index; return 0; fi
   if [ -e "$KB_DIR" ] && [ -n "$(ls -A "$KB_DIR" 2>/dev/null)" ]; then
     die "$KB_DIR esiste e non è un repository Git: spostarlo (es. $KB_DIR.precedente) e rieseguire; nessuna modifica"; fi
   rmdir "$KB_DIR" 2>/dev/null || true
-  if ! timeout $((TIMEOUT * 4)) git clone -q --branch "$KB_BRANCH" "$KB_REMOTE" "$KB_DIR" 2>/tmp/kb-clone.$$; then
-    local why; why=$(tail -1 /tmp/kb-clone.$$); rm -f /tmp/kb-clone.$$
-    echo "kb: KNOWLEDGE BASE NON RECUPERATA ($why)." >&2
-    echo "    Controllare rete e autorizzazione (deploy key del server: ${KB_SSH_KEY:-non impostata}.pub) e rieseguire: kb init" >&2
+  local A=(); mapfile -t A < <(is_https "$KB_REMOTE" && auth_args "$KB_TOKEN_FILE")
+  if ! timeout $((TIMEOUT * 4)) git "${A[@]}" clone -q --branch "$KB_BRANCH" -- "$KB_REMOTE" "$KB_DIR" 2>/tmp/kb-clone.$$; then
+    local why; why=$(cat /tmp/kb-clone.$$); rm -f /tmp/kb-clone.$$
+    if is_https "$KB_REMOTE"; then echo "kb: KNOWLEDGE BASE NON RECUPERATA: $(access_reason "$why"). Per correggere: kb collega (URL) o kb token" >&2
+    else echo "kb: KNOWLEDGE BASE NON RECUPERATA ($(tail -1 <<<"$why"))." >&2
+      echo "    Controllare rete e autorizzazione (deploy key del server: ${KB_SSH_KEY:-non impostata}.pub) e rieseguire: kb init" >&2; fi
     exit 4
   fi
   rm -f /tmp/kb-clone.$$
-  set_identity; install_hook
+  set_identity; set_credential; install_hook
   date -u +%s > "$(STATE)"; cmd_index; say "Knowledge Base recuperata in $KB_DIR ($(g rev-parse --short HEAD))"
 }
 cmd_sync() {
+  [ -n "$KB_REMOTE" ] || not_configured
   [ -d "$KB_DIR/.git" ] || die "copia locale non inizializzata: kb init"
-  local last; last=$(cat "$(STATE)" 2>/dev/null || echo 0)
-  if ! remote_git fetch -q origin "$KB_BRANCH" 2>/dev/null; then
-    echo "kb: GitHub non raggiungibile: uso la copia locale, aggiornata al $( [ "$last" -gt 0 ] && date -u -d "@$last" '+%F %H:%M UTC' || echo 'mai' ) (potrebbe non essere aggiornata)" >&2
+  local last err; last=$(cat "$(STATE)" 2>/dev/null || echo 0)
+  set_credential
+  if ! err=$(remote_git fetch -q origin "$KB_BRANCH" 2>&1); then
+    local quando; quando=$( [ "$last" -gt 0 ] && date -u -d "@$last" '+%F %H:%M UTC' || echo 'mai' )
+    if is_https "$KB_REMOTE" && is_auth_error "$err"; then
+      # token scaduto o revocato: la copia locale resta, la gestione del server continua (uscita 0), problema visibile
+      echo "kb: ACCESSO NEGATO alla Knowledge Base: $(access_reason "$err"). Copia locale conservata, aggiornata al $quando." >&2
+      echo "    Sostituire la credenziale da un terminale: /srv/ops/bin/kb token" >&2
+      echo "$(date -u '+%F %H:%M UTC') accesso negato: $(access_reason "$err") (kb token)" > "$KB_DIR/.git/kb-errore"
+    else
+      echo "kb: repository non raggiungibile: uso la copia locale, aggiornata al $quando (potrebbe non essere aggiornata)" >&2
+    fi
     exit 0
   fi
+  rm -f "$KB_DIR/.git/kb-errore"
   local ahead behind; ahead=$(g rev-list --count "origin/$KB_BRANCH..HEAD"); behind=$(g rev-list --count "HEAD..origin/$KB_BRANCH")
   if [ -n "$(g status --porcelain --untracked-files=no)" ]; then
     warn "file versionati modificati localmente: nessun aggiornamento applicato (APPEND ONLY: non si modificano record né pagine; creare un nuovo record)"
@@ -167,12 +215,15 @@ cmd_sync() {
   say "sincronizzata: $behind nuovi commit recuperati, $ahead commit locali non pubblicati, $(g status --porcelain | grep -c '^??') file locali non versionati (conservati)"
 }
 cmd_status() {
+  [ -n "$KB_REMOTE" ] || not_configured
   [ -d "$KB_DIR/.git" ] || { echo "Knowledge Base: NON inizializzata in $KB_DIR (kb init)"; exit 1; }
   local last; last=$(cat "$(STATE)" 2>/dev/null || echo 0)
   echo "copia: $KB_DIR ($(g rev-parse --short HEAD), ramo $KB_BRANCH)"
   echo "ultima sincronizzazione riuscita: $( [ "$last" -gt 0 ] && date -u -d "@$last" '+%F %H:%M UTC' || echo mai )"
   echo "commit locali non pubblicati: $(g rev-list --count "origin/$KB_BRANCH..HEAD" 2>/dev/null)"
   echo "record in bozza (non versionati): $(g status --porcelain records 2>/dev/null | grep -c '^?? records/RECORD-')"
+  if is_https "$KB_REMOTE"; then echo "accesso: HTTPS in sola lettura, $([ -n "$KB_TOKEN_FILE" ] && echo "con token ($KB_TOKEN_FILE)" || echo 'senza credenziali')"; fi
+  [ ! -s "$KB_DIR/.git/kb-errore" ] || echo "ULTIMO ERRORE: $(cat "$KB_DIR/.git/kb-errore")"
 }
 cmd_new() {
   [ -d "$KB_DIR/.git" ] || die "copia locale non inizializzata: kb init"
@@ -218,6 +269,7 @@ cmd_validate() { local id=${1:?uso: kb validate RECORD-…}; if validate "$id"; 
 cmd_publish() {
   local id=${1:?uso: kb publish RECORD-…} n st
   [ -d "$KB_DIR/.git" ] || die "copia locale non inizializzata: kb init"
+  ! is_https "$KB_REMOTE" || die "questo server legge la Knowledge Base via HTTPS in sola lettura: la pubblicazione dei record è riservata ai server con scrittura autorizzata; il record resta locale ($id)"
   validate "$id" || die "record non valido: correggerlo prima di pubblicare"
   st=$(meta "$KB_DIR/records/$id/RECORD.md" stato)
   [ -z "$(g status --porcelain --untracked-files=no)" ] || die "file versionati modificati localmente: APPEND ONLY, nessuna pubblicazione"
@@ -250,6 +302,137 @@ cmd_schedule() {
   esac
 }
 
+# ---------------------------------------------------------------------------------------------- collegamento (HTTPS)
+conf_set() {  # conf_set CHIAVE VALORE: riscrive solo la riga di assegnazione di kb.conf (la aggiunge se manca)
+  local k=$1 v=$2
+  [[ "$v" =~ ^[A-Za-z0-9:/._~+%-]*$ ]] || die "valore non ammesso per $k"
+  grep -qE "^$k=" "$CONF" || printf '%s=""\n' "$k" >> "$CONF"
+  sed -i -E "s#^$k=.*#$k=\"$v\"#" "$CONF"
+}
+commit_conf() {  # registra kb.conf nella foundation, se è un repository (nessun segreto in kb.conf)
+  local d; d=$(dirname "$CONF")
+  git -C "$d" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  git -C "$d" add -- "$(basename "$CONF")" 2>/dev/null && git -C "$d" commit -q -m "kb: $1" -- "$(basename "$CONF")" 2>/dev/null || true
+}
+TTY_IN=${KB_TTY:-/dev/tty}   # KB_TTY: solo per le prove automatiche (risposte da file)
+tty_ok=0
+tty_open() { [ "$tty_ok" = 1 ] && return 0; { exec 8<"$TTY_IN"; } 2>/dev/null && tty_ok=1; }
+ask() {  # ask "domanda" [nascosto] → RISPOSTA; 1 se non c'è un terminale o l'input è finito
+  RISPOSTA=""
+  tty_open || return 1
+  printf '%s' "$1" >&2
+  if [ "${2:-}" = nascosto ]; then IFS= read -rs RISPOSTA <&8 || return 1; echo >&2
+  else IFS= read -r RISPOSTA <&8 || return 1; fi
+  return 0
+}
+valid_url() {  # solo https://host/percorso, senza credenziali nell'URL
+  [[ "$1" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/[A-Za-z0-9._~/%+-]+$ ]] && [[ "$1" != *@* ]]
+}
+try_access() {  # $1 URL, $2 file del token (vuoto = anonimo) → 0 accesso con il ramo presente; MOTIVO altrimenti
+  local out A=() rc=0
+  mapfile -t A < <(auth_args "$2")
+  out=$(KB_TOKEN_TRY=$2 KB_REMOTE_TRY=$1 timeout $((TIMEOUT * 2)) git "${A[@]}" ls-remote --heads "$1" 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ]; then MOTIVO=$(access_reason "$out"); AUTH=0; is_auth_error "$out" && AUTH=1; return 1; fi
+  grep -q "refs/heads/$KB_BRANCH\$" <<<"$out" || { MOTIVO="ramo $KB_BRANCH assente nel repository"; AUTH=0; return 1; }
+  return 0
+}
+read_token() {  # chiede il token (input nascosto) e lo scrive in un file temporaneo 0600 → TOKEN_TMP
+  local t d
+  ask "Incolla il token di accesso al repository (input nascosto; NON la password dell'account): " nascosto || return 1
+  t=$RISPOSTA; t=${t//[[:space:]]/}
+  [ -n "$t" ] || { echo "nessun token inserito" >&2; return 2; }
+  [[ "$t" =~ ^[A-Za-z0-9_.-]{20,255}$ ]] || { echo "formato del token non valido (lettere, cifre, _ . -)" >&2; return 2; }
+  d=$(dirname "${KB_TOKEN_FILE:-$TOKEN_DEFAULT}")
+  (umask 077; mkdir -p "$d"); chmod 0700 "$d"
+  TOKEN_TMP=$(umask 077; mktemp "$d/.token.XXXXXX")
+  printf '%s\n' "$t" > "$TOKEN_TMP"   # printf è interno alla shell: il token non compare negli argomenti dei processi
+  t=""
+}
+install_token() {  # sostituisce il file del token con quello verificato
+  local f=${KB_TOKEN_FILE:-$TOKEN_DEFAULT}
+  chmod 0600 "$TOKEN_TMP"; mv -f -- "$TOKEN_TMP" "$f"; TOKEN_TMP=""
+  KB_TOKEN_FILE=$f
+}
+cleanup_tmp() { [ -z "${TOKEN_TMP:-}" ] || rm -f -- "$TOKEN_TMP"; }
+cmd_cred() {  # helper di git (credential.helper): fornisce il token solo per l'host del repository della KB
+  [ "${1:-}" = get ] || exit 0
+  local url=${KB_REMOTE_TRY:-$KB_REMOTE} f=${KB_TOKEN_TRY:-$KB_TOKEN_FILE} line proto="" host="" want
+  want=${url#https://}; want=${want%%/*}
+  while IFS= read -r line && [ -n "$line" ]; do
+    case $line in protocol=*) proto=${line#protocol=} ;; host=*) host=${line#host=} ;; esac
+  done
+  [ "$proto" = https ] && [ "$host" = "$want" ] && [ -n "$f" ] && [ -r "$f" ] || exit 0
+  printf 'username=x-access-token\npassword=%s\n' "$(tr -d '[:space:]' < "$f")"
+}
+cmd_collega() {  # collegamento facoltativo; domande una sola volta (la scelta resta in kb.conf)
+  local url="" no=0
+  while [ $# -gt 0 ]; do case $1 in --url) url=${2:-}; shift 2 ;; --no) no=1; shift ;; *) die "uso: kb collega [--url URL | --no]" ;; esac; done
+  [ -w "$CONF" ] || die "$CONF non scrivibile"
+  if [ -d "$KB_DIR/.git" ] && [ -n "$KB_REMOTE" ]; then
+    say "Knowledge Base già collegata ($KB_REMOTE). Per sostituire il token: kb token"; return 0; fi
+  if [ "$no" = 1 ]; then conf_set KB_SCELTA no; conf_set KB_REMOTE ""; commit_conf "Knowledge Base non configurata per scelta"
+    say "KB non configurata per scelta (per collegarla in seguito: kb collega)"; return 0; fi
+  if [ -z "$url" ]; then
+    while :; do
+      ask "Vuoi collegare una Knowledge Base? [S/N] " || { echo "kb: nessun terminale: Knowledge Base non collegata (kb collega da un terminale)" >&2; exit 4; }
+      case $RISPOSTA in [SsYy]*) break ;; [Nn]*) cmd_collega --no; return 0 ;; esac
+    done
+  fi
+  trap cleanup_tmp EXIT
+  local stage=url tok=""
+  while :; do
+    case $stage in
+      url)
+        if [ -z "$url" ]; then
+          ask "Inserisci l'URL HTTPS del repository della Knowledge Base: " || { echo "kb: input terminato: Knowledge Base non collegata" >&2; exit 4; }
+          url=${RISPOSTA//[[:space:]]/}
+        fi
+        valid_url "$url" || { echo "URL non valido: serve https://host/percorso, senza credenziali nell'URL" >&2; url=""; continue; }
+        if try_access "$url" ""; then tok=""; stage=ok; continue; fi
+        if [ "$AUTH" = 1 ]; then echo "Il repository richiede autenticazione." >&2; stage=token
+        else echo "Accesso non riuscito: $MOTIVO." >&2; stage=menu; fi ;;
+      token)
+        cleanup_tmp; TOKEN_TMP=""
+        local r=0; read_token || r=$?
+        [ "$r" -ne 1 ] || { echo "kb: input terminato: Knowledge Base non collegata" >&2; exit 4; }
+        if [ "$r" -eq 0 ] && try_access "$url" "$TOKEN_TMP"; then tok=$TOKEN_TMP; stage=ok; continue; fi
+        [ "$r" -ne 0 ] || echo "Accesso con il token non riuscito: $MOTIVO." >&2
+        stage=menu ;;
+      menu)
+        ask "  1) correggere l'URL  2) inserire di nuovo il token  3) riprovare  4) continuare senza Knowledge Base: " \
+          || { echo "kb: input terminato: Knowledge Base non collegata" >&2; exit 4; }
+        case $RISPOSTA in
+          1) url=""; stage=url ;;
+          2) stage=token ;;
+          3) if [ -n "${TOKEN_TMP:-}" ] && try_access "$url" "$TOKEN_TMP"; then tok=$TOKEN_TMP; stage=ok
+             elif [ -z "${TOKEN_TMP:-}" ] && try_access "$url" ""; then tok=""; stage=ok
+             else echo "Accesso non riuscito: $MOTIVO." >&2; fi ;;
+          4) cleanup_tmp; cmd_collega --no; return 0 ;;
+        esac ;;
+      ok) break ;;
+    esac
+  done
+  # accesso verificato: configurazione, copia locale, sincronizzazione periodica
+  KB_REMOTE=$url
+  if [ -n "$tok" ]; then install_token; else KB_TOKEN_FILE=""; fi
+  conf_set KB_REMOTE "$KB_REMOTE"; conf_set KB_TOKEN_FILE "$KB_TOKEN_FILE"; conf_set KB_SCELTA si; conf_set KB_SSH_KEY ""
+  KB_SSH_KEY=""; unset GIT_SSH_COMMAND
+  commit_conf "Knowledge Base collegata via HTTPS"
+  say "Accesso verificato ($([ -n "$tok" ] && echo "token in $KB_TOKEN_FILE, 0600" || echo 'repository pubblico, senza credenziali'))."
+  cmd_init
+  if command -v crontab >/dev/null; then cmd_schedule on; else warn "cron assente: sincronizzazione periodica non configurata (kb sync a inizio lavoro)"; fi
+}
+cmd_token() {  # sostituisce il token: verifica il nuovo accesso, poi ripristina la sincronizzazione; il vecchio resta se fallisce
+  is_https "$KB_REMOTE" || die "Knowledge Base non collegata via HTTPS (kb collega)"
+  trap cleanup_tmp EXIT
+  local r=0; read_token || r=$?
+  [ "$r" -eq 0 ] || die "nessun token valido inserito: credenziale invariata"
+  try_access "$KB_REMOTE" "$TOKEN_TMP" || die "accesso con il nuovo token non riuscito ($MOTIVO): credenziale precedente invariata"
+  install_token; conf_set KB_TOKEN_FILE "$KB_TOKEN_FILE"; commit_conf "token della Knowledge Base sostituito"
+  say "Nuovo token verificato e salvato in $KB_TOKEN_FILE (0600)."
+  if [ -d "$KB_DIR/.git" ]; then cmd_sync; else cmd_init; fi
+}
+
 case ${1:-} in
   init) cmd_init ;;
   sync) [ "${2:-}" = --quiet ] && QUIET=1; cmd_sync ;;
@@ -260,5 +443,8 @@ case ${1:-} in
   index) cmd_index ;;
   search) shift; cmd_search "$*" ;;
   schedule) cmd_schedule "${2:-}" ;;
-  *) sed -n '2,19p' "$0"; exit 2 ;;
+  collega) shift; cmd_collega "$@" ;;
+  token) cmd_token ;;
+  credenziale) cmd_cred "${2:-}" ;;
+  *) sed -n '2,22p' "$0"; exit 2 ;;
 esac

@@ -3,11 +3,16 @@
 #
 #   sudo ./bootstrap.sh --admin UTENTE [--owner "Nome"] [--check]
 #   sudo ./bootstrap.sh --admin UTENTE --knowledge-base-only [--check]
-#       aggiorna SOLO la Knowledge Base condivisa: strumento /srv/ops/bin/kb, kb.conf, deploy key, copia locale
-#       (kb init / kb sync). Nessun pacchetto, agente, home o manutenzione; nessuna modifica operativa.
-#   Opzioni della Knowledge Base: --kb-remote URL (predefinito il repository condiviso su GitHub), --kb-id NOME
-#   (nome tecnico e non sensibile del server nei record; predefinito l'hostname).
-#   Esito 4: tutto il resto completato, ma la Knowledge Base NON è stata recuperata (rete o autorizzazione).
+#       aggiorna SOLO la Knowledge Base: strumento /srv/ops/bin/kb, kb.conf, copia locale (e chiede di nuovo se
+#       collegarla). Nessun pacchetto, agente, home o manutenzione; nessuna modifica operativa.
+#   Knowledge Base FACOLTATIVA, repository scelto dall'utente (nessun predefinito): durante l'avvio il bootstrap chiede
+#   "Vuoi collegare una Knowledge Base? [S/N]", poi l'URL HTTPS e, solo se serve, un token di lettura (input nascosto),
+#   tramite "kb collega" come amministratore; la scelta resta in kb.conf e non viene richiesta di nuovo.
+#   Opzioni: --no-kb (nessuna domanda: KB non configurata per scelta), --kb-url URL (URL HTTPS già scelto),
+#   --kb-id NOME (nome tecnico e non sensibile del server nei record; predefinito l'hostname).
+#   Compatibilità: --kb-remote URL SSH o percorso locale = collegamento con deploy key delle versioni precedenti.
+#   Esito 4: tutto il resto completato, ma la Knowledge Base richiesta NON è stata collegata (nessun terminale per
+#   le domande, oppure rete o autorizzazione nel collegamento con deploy key).
 #
 # Fa soltanto questo, ed è ripetibile e riprendibile:
 #   1. pacchetti minimi per l'agente (git, curl, ca-certificates, gnupg, jq) e Node.js 22 da NodeSource
@@ -40,17 +45,17 @@ NS_PIN=/etc/apt/preferences.d/nodejs
 MARK_BEGIN='# >>> ops: strumenti di amministrazione'
 MARK_END='# <<< ops <<<'
 BASE_PKGS="git curl ca-certificates gnupg jq openssh-client"
-KB_REMOTE_DEFAULT=git@github.com:filippobrundia/server-knowledge-base.git
 GITHUB_ED25519_FPR=SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU   # pubblicata da GitHub (api.github.com/meta)
 
-ADMIN=${SUDO_USER:-}; OWNER=""; CHECK=0; KBONLY=0; KB_REMOTE=$KB_REMOTE_DEFAULT; KB_ID=""
+ADMIN=${SUDO_USER:-}; OWNER=""; CHECK=0; KBONLY=0; KB_REMOTE=""; KB_ID=""; NO_KB=0
 while [ $# -gt 0 ]; do
   case $1 in
     --admin) ADMIN=${2:-}; shift 2 ;;
     --owner) OWNER=${2:-}; shift 2 ;;
     --check) CHECK=1; shift ;;
     --knowledge-base-only) KBONLY=1; shift ;;
-    --kb-remote) KB_REMOTE=${2:-}; shift 2 ;;
+    --kb-remote|--kb-url) KB_REMOTE=${2:-}; shift 2 ;;
+    --no-kb) NO_KB=1; shift ;;
     --kb-id) KB_ID=${2:-}; shift 2 ;;
     -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "opzione sconosciuta: $1" >&2; exit 2 ;;
@@ -88,7 +93,11 @@ if [ -z "$OWNER" ]; then OWNER=$(getent passwd "$ADMIN" | cut -d: -f5 | cut -d, 
 HOST=$(hostname -s)
 [ -n "$KB_ID" ] || KB_ID=$HOST
 [[ "$KB_ID" =~ ^[a-z0-9][a-z0-9-]{0,23}$ ]] || die "--kb-id non valido ($KB_ID): minuscole, cifre e trattini, massimo 24"
-[[ "$KB_REMOTE" =~ ^[A-Za-z0-9@:/._~+-]+$ ]] || die "--kb-remote non valido"
+[ -z "$KB_REMOTE" ] || [[ "$KB_REMOTE" =~ ^[A-Za-z0-9@:/._~+-]+$ ]] || die "--kb-url/--kb-remote non valido"
+[[ "$KB_REMOTE" != https://*@* ]] || die "--kb-url: nessuna credenziale nell'URL (il token si inserisce quando richiesto)"
+[ "$NO_KB" = 0 ] || [ -z "$KB_REMOTE" ] || die "--no-kb e --kb-url sono alternativi"
+kb_legacy() { [ -n "$1" ] && [[ "$1" != https://* ]]; }   # SSH o percorso locale: deploy key (versioni precedenti)
+KB_SSHKEY_RENDER=""; kb_legacy "$KB_REMOTE" && KB_SSHKEY_RENDER="$AHOME/.ssh/kb_deploy"
 [[ "$HOST" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || die "hostname non valido ($HOST): impostarlo prima con hostnamectl"
 
 # Mai sul server di origine o su una /srv/ops che non è nostra.
@@ -115,6 +124,7 @@ render() {  # $1 sorgente → $2 destinazione
   s=${s//@@HOST@@/$HOST}; s=${s//@@ADMIN@@/$ADMIN}; s=${s//@@OWNER@@/$OWNER}
   s=${s//@@DATE@@/$TODAY}; s=${s//@@PKG_VERSION@@/$PKG_VERSION}
   s=${s//@@KB_REMOTE@@/$KB_REMOTE}; s=${s//@@KB_SERVER_ID@@/$KB_ID}; s=${s//@@AHOME@@/$AHOME}
+  s=${s//@@KB_SSH_KEY@@/$KB_SSHKEY_RENDER}
   printf '%s\n' "$s" > "$2"
 }
 seed_file() {  # file che l'agente compila e aggiorna: creati una volta, mai sovrascritti
@@ -305,38 +315,63 @@ elif [ -f "$REF" ]; then
 fi
 if [ "$KBONLY" = 1 ]; then echo "$PKG_VERSION" > "$STAGE/kbversion"; install -o "$ADMIN" -g "$ADMIN" -m 0644 "$STAGE/kbversion" "$OPS/.bootstrap/knowledge-base-version"
 else echo "$PKG_VERSION" > "$STAGE/version"; install -o "$ADMIN" -g "$ADMIN" -m 0644 "$STAGE/version" "$OPS/.bootstrap/version"; fi
-# --- Knowledge Base condivisa (repository separato; copia locale non versionata nella foundation) ---
-KB_OK=0
-kb_setup() {
-  log "== Knowledge Base condivisa ($KB_REMOTE, server '$KB_ID')"
+# --- Knowledge Base FACOLTATIVA (repository separato scelto dall'utente; copia locale non versionata nella foundation) ---
+KB_OK=0; KB_STATE=""
+kb_conf_val() { awk -v k="$1" 'index($0, k "=") == 1 { v = substr($0, length(k) + 2); sub(/[ \t]+#.*$/, "", v); gsub(/"/, "", v); print v; exit }' "$OPS/kb.conf" 2>/dev/null; }
+kb_ready() {  # copia presente e verificata con kb status
+  local st
+  [ -d "$OPS/knowledge-base/.git" ] || return 1
+  st=$(as_admin "$OPS/bin/kb" status) || { log "  ATTENZIONE: kb status non riuscito (rc=$?): Knowledge Base NON verificata"; return 1; }
+  KB_OK=1; KB_STATE=ok; log "  Knowledge Base disponibile: ${st%%$'\n'*}"
+}
+kb_legacy_setup() {  # collegamento SSH con deploy key, come nelle versioni precedenti (installazioni esistenti)
+  local remote=$1 key="$AHOME/.ssh/kb_deploy" kh="$AHOME/.ssh/known_hosts" rc
   command -v ssh-keygen >/dev/null || { log "  ssh-keygen assente (openssh-client)"; return 1; }
-  local key="$AHOME/.ssh/kb_deploy" kh="$AHOME/.ssh/known_hosts" rc st
   as_admin install -d -m 0700 "$AHOME/.ssh"
   if [ ! -f "$key" ]; then as_admin ssh-keygen -q -t ed25519 -N '' -C "kb-deploy $KB_ID" -f "$key"; log "  deploy key del server creata: $key"; fi
-  if [[ "$KB_REMOTE" == git@github.com:* || "$KB_REMOTE" == ssh://git@github.com/* ]] && ! as_admin ssh-keygen -F github.com -f "$kh" >/dev/null 2>&1; then
+  if [[ "$remote" == git@github.com:* || "$remote" == ssh://git@github.com/* ]] && ! as_admin ssh-keygen -F github.com -f "$kh" >/dev/null 2>&1; then
     local line fpr; line=$(ssh-keyscan -T 15 -t ed25519 github.com 2>/dev/null); fpr=$(ssh-keygen -lf - <<< "$line" 2>/dev/null | awk '{print $2}')
     if [ -n "$line" ] && [ "$fpr" = "$GITHUB_ED25519_FPR" ]; then printf '%s\n' "$line" | as_admin tee -a "$kh" >/dev/null; log "  chiave host di GitHub verificata ($fpr)"
     else log "  chiave host di GitHub non verificabile (rete assente o impronta diversa: $fpr)"; fi
   fi
+  as_admin "$OPS/bin/kb" init; rc=$?
+  if [ "$rc" = 0 ] && kb_ready; then
+    if as_admin sh -c 'command -v crontab' >/dev/null; then as_admin "$OPS/bin/kb" schedule on | sed 's/^/  /' | tee -a "$LOG"
+    else log "  ATTENZIONE: cron assente, sincronizzazione periodica non configurata (usare kb sync a inizio lavoro)"; fi
+    return 0
+  fi
+  KB_STATE=fallita
+  log "  KNOWLEDGE BASE NON RECUPERATA: fase NON completata."
+  log "  Registrare la chiave pubblica del server come deploy key del repository:"
+  log "    $(cat "$key.pub")"
+  log "  poi, come $ADMIN: /srv/ops/bin/kb init   (oppure: sudo bootstrap.sh --admin $ADMIN --knowledge-base-only)"
+  return 1
+}
+kb_setup() {
+  local cur scelta args=() rc=0
+  log "== Knowledge Base (facoltativa)"
   if [ -e "$OPS/knowledge-base" ] && [ ! -d "$OPS/knowledge-base/.git" ]; then   # copia incorporata della 0.2.0
     mv "$OPS/knowledge-base" "$OPS/knowledge-base.v0.2.0-$TS"; chown -R "$ADMIN:$ADMIN" "$OPS/knowledge-base.v0.2.0-$TS"
     log "  copia della Knowledge Base 0.2.0 spostata (conservata): $OPS/knowledge-base.v0.2.0-$TS"
   fi
-  if [ -d "$OPS/knowledge-base/.git" ]; then as_admin "$OPS/bin/kb" sync; rc=$?; else as_admin "$OPS/bin/kb" init; rc=$?; fi
-  if [ "$rc" = 0 ] && [ -d "$OPS/knowledge-base/.git" ]; then
-    # output completo in una variabile (niente "| head": chiudeva la pipe in anticipo) e codice di uscita controllato
-    st=$(as_admin "$OPS/bin/kb" status) || {
-      log "  ATTENZIONE: kb status non riuscito (rc=$?) dopo sync/init: Knowledge Base NON verificata"; return 1; }
-    KB_OK=1; log "  Knowledge Base disponibile: ${st%%$'\n'*}"
-    if as_admin sh -c 'command -v crontab' >/dev/null; then as_admin "$OPS/bin/kb" schedule on | sed 's/^/  /' | tee -a "$LOG"
-    else log "  ATTENZIONE: cron assente, sincronizzazione periodica non configurata (usare kb sync a inizio lavoro)"; fi
-  else
-    log "  KNOWLEDGE BASE NON RECUPERATA: fase NON completata."
-    log "  Per il primo recupero (repository privato): registrare la chiave pubblica del server come deploy key del"
-    log "  repository (GitHub → Settings → Deploy keys; scrittura solo se il server deve pubblicare record):"
-    log "    $(cat "$key.pub")"
-    log "  poi, come $ADMIN: /srv/ops/bin/kb init   (oppure: sudo bootstrap.sh --admin $ADMIN --knowledge-base-only)"
+  cur=$(kb_conf_val KB_REMOTE); scelta=$(kb_conf_val KB_SCELTA)
+  if [ -d "$OPS/knowledge-base/.git" ] && [ -n "$cur" ]; then   # già collegata (HTTPS o deploy key): solo sincronizzazione
+    as_admin "$OPS/bin/kb" sync || true; kb_ready || KB_STATE=fallita; return 0
   fi
+  if kb_legacy "$cur"; then kb_legacy_setup "$cur"; return; fi
+  if [ "$NO_KB" = 1 ]; then as_admin "$OPS/bin/kb" collega --no | sed 's/^/  /' | tee -a "$LOG"; KB_STATE=scelta; return 0; fi
+  if [ "$scelta" = no ] && [ "$KBONLY" = 0 ] && [ -z "$KB_REMOTE" ]; then
+    log "  KB non configurata per scelta (registrata in kb.conf; per collegarla: /srv/ops/bin/kb collega)"; KB_STATE=scelta; return 0
+  fi
+  if [ -n "$KB_REMOTE" ]; then args=(--url "$KB_REMOTE"); elif [ -n "$cur" ]; then args=(--url "$cur"); fi
+  # domande al terminale dell'amministratore (input del token nascosto, mai nei log); nessuna ripetizione della foundation
+  as_admin env ${KB_TTY:+KB_TTY="$KB_TTY"} "$OPS/bin/kb" collega "${args[@]}" || rc=$?
+  if [ "$rc" = 0 ] && [ "$(kb_conf_val KB_SCELTA)" = no ]; then log "  KB non configurata per scelta"; KB_STATE=scelta; return 0; fi
+  if [ "$rc" = 0 ] && kb_ready; then return 0; fi
+  KB_STATE=fallita
+  log "  Knowledge Base richiesta ma NON collegata (codice $rc). Per collegarla in seguito, come $ADMIN da un terminale:"
+  log "    /srv/ops/bin/kb collega"
+  return 1
 }
 kb_setup || true
 
@@ -352,8 +387,8 @@ else as_admin git -C "$OPS" commit -q -m "bootstrap: $([ "$KBONLY" = 1 ] && echo
 if [ "$KBONLY" = 1 ]; then
   log "== VERIFY"
   [ -z "$(as_admin git -C "$OPS" status --porcelain)" ] && log "  /srv/ops: repository pulito" || die "/srv/ops: modifiche non registrate"
-  [ "$KB_OK" = 1 ] || { log "Knowledge Base NON recuperata: vedere le istruzioni sopra."; exit 4; }
-  log "Fatto: solo la Knowledge Base è stata aggiornata; nessuna modifica operativa."
+  [ "$KB_STATE" != fallita ] || { log "Knowledge Base NON collegata: vedere le istruzioni sopra."; exit 4; }
+  log "Fatto: solo la Knowledge Base è stata aggiornata ($([ "$KB_OK" = 1 ] && echo collegata || echo 'non configurata per scelta')); nessuna modifica operativa."
   exit 0
 fi
 
@@ -415,8 +450,9 @@ if cmp -s "$STAGE/ops/docs/bootstrap/ops-installa" "$INSTALLA" && [ "$(stat -c '
    && cmp -s "$STAGE/manifest" "$REF"; then log "  $INSTALLA e impronte di riferimento ($REF) installati"
 else log "  $INSTALLA o $REF non conformi"; v_ok=0; fi
 [ "$v_ok" = 1 ] || die "verifica finale non superata (vedi sopra)"
-if [ "$KB_OK" != 1 ]; then
-  log "ATTENZIONE: Knowledge Base condivisa NON recuperata (fase non completata): vedere le istruzioni sopra."
+[ "$KB_STATE" != scelta ] || log "Knowledge Base: non configurata per scelta (facoltativa; per collegarla: /srv/ops/bin/kb collega)."
+if [ "$KB_STATE" = fallita ]; then
+  log "ATTENZIONE: Knowledge Base richiesta ma NON collegata: vedere le istruzioni sopra (il resto è completo)."
   log "Il resto è pronto. Prossimo passo, come $ADMIN in un nuovo terminale:  claude"
   exit 4
 fi
