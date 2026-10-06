@@ -39,6 +39,15 @@ si aggiungono sotto, con la loro data.
 ### 2026-09-27 — Antigravity CLI al posto del login personale di Gemini CLI (ereditata)
 - Google ha dismesso il login personale di Gemini CLI; Antigravity (`agy`) legge nativamente `AGENTS.md`.
 
+### 2026-10-06 — Quattro agenti installati, uno per la sessione, sempre in sandbox (ereditata)
+- Si installano sempre Claude Code, Codex CLI, Antigravity CLI e Gemini CLI; il proprietario sceglie l'agente della
+  sessione (`agente`) e si autentica solo con quello. Gli altri non bloccano: ambiente e sandbox verificati senza login.
+- Nessun agente lavora senza sandbox; i comandi ordinari che la sandbox non permette sono consentiti uno per uno, `sudo`
+  è vietato. Nessun amministratore nei gruppi `docker`/`lxd`, nessun `NOPASSWD`, nessuna restrizione di Ubuntu
+  disattivata globalmente: profili AppArmor mirati solo per binari di root (`ops-agy`, `ops-bwrap` dove Ubuntu non lo ha).
+- Nessun servizio a pagamento attivato automaticamente (Antigravity: piano Individual gratuito; Gemini CLI: chiave API
+  senza fatturazione).
+
 ### 2026-09-24 — Impostazione dei backup (ereditata)
 - **Un solo scheduler**: cron (Borg alle 03:00, copia remota alle 04:00); `borgmatic.timer` del pacchetto
   disabilitato.

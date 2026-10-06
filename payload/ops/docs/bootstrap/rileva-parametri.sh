@@ -59,6 +59,7 @@ done
 echo
 echo "== Da decidere con il proprietario (una sola richiesta)"
 [ -n "$P" ] || echo "  - PROFILO: base (senza container) oppure docker (base + Docker, passo 8)"
+[ -n "$(hc AGENTE)$(hc AGENTI_CLI)" ] || echo "  - AGENTE: agente della sessione, da scegliere con il comando agente (Claude Code, Codex CLI, Antigravity CLI, Gemini CLI)"
 [ "$DYN" = 1 ] && echo "  - 7.1 rete: indirizzo da DHCP. Configurare un indirizzo statico (netplan, passaggio con accesso fisico) oppure escludere 7.1"
 [ "$SRV_SEP" = 0 ] && echo "  - 2 dischi: layout a disco unico (cartelle su /). Accettarlo, preparare volumi dedicati (⚠️ distruttivo, a mano) oppure escludere 2"
 [ -n "$(hc OFFSITE)" ] || echo "  - 10.3 copia remota: destinazione e credenziali rclone del proprietario (configurazione a mano) oppure escludere 10.3"

@@ -183,8 +183,17 @@ else
   warn "monitoraggio esterno non configurato (docs/runbooks/monitoraggio-esterno.md)"
 fi
 CLI_LOG=$HOME/.local/state/ops/cli-update/cli-update.log
-cli=$(awk -v s="$(date -u -d '-8 days' '+%F')" '$1 >= s && /(VERIFICA FALLITA|ERRORE)/' "$CLI_LOG" 2>/dev/null | tail -1)
-[ -n "$cli" ] && warn "aggiornamento CLI con problemi: ${cli:20:140}"
+# per ogni agente solo l'ULTIMO esito degli ultimi 8 giorni (un problema superato da una verifica riuscita non resta);
+# il login mancante conta solo per l'agente della sessione (AGENTE; compatibilità: primo nome di AGENTI_CLI)
+SESS=${AGENTE:-}; [ -n "$SESS" ] || { l=${AGENTI_CLI:-}; SESS=${l%% *}; }
+[ -n "$SESS" ] || warn "nessun agente della sessione in host.conf (sceglierlo con: agente)"
+for a in claude codex agy gemini; do
+  cli=$(awk -v s="$(date -u -d '-8 days' '+%F')" -v a="cli-update: $a:" '$1 >= s && index($0, a) && /(VERIFICA FALLITA|ERRORE|NON CONFORME|NON AUTENTICATO|verifica OK|ambiente OK|verificato)/' "$CLI_LOG" 2>/dev/null | tail -1)
+  case $cli in
+    *"NON AUTENTICATO"*) [ "$a" != "$SESS" ] || warn "agente della sessione senza login: ${cli:20:140}" ;;
+    *"VERIFICA FALLITA"*|*ERRORE*|*"NON CONFORME"*) warn "agente $a: ${cli:20:140}" ;;
+  esac
+done
 n_cli=$(awk -v s="$(date -u -d '-22 days' '+%F')" '$1 >= s && /(RINVIO|rinviato)/' "$CLI_LOG" 2>/dev/null | wc -l)
 [ "$n_cli" -ge 3 ] && warn "aggiornamento CLI rinviato $n_cli volte in 3 settimane (programma in uso o manutenzione in corso)"
 

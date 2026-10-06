@@ -61,7 +61,7 @@ for e in $NEW; do
   en=0; for u in ${e//|/ }; do systemctl is-enabled --quiet "$u" 2>/dev/null && en=1; done
   [ "$en" = 1 ] && ok "$e abilitato all'avvio" || ko "$e non abilitato all'avvio"
 done
-for u in ops-postboot.service ops-maint-window.timer ops-cli-update.timer; do
+for u in ops-postboot.service ops-maint-window.timer ops-cli-update.timer ops-agy-update.timer; do
   [ "$(systemctl is-enabled "$u" 2>/dev/null)" = disabled ] && ok "$u disabilitato (resta così)" || ko "$u non disabilitato"
 done
 [ ! -e "$STATE/hold" ] && [ ! -e "$STATE/postboot-pending" ] && ok "nessuna sospensione né verifica pendente" || ko "hold o postboot-pending presenti"

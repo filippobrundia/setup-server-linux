@@ -9,7 +9,9 @@ Versione: vedi `VERSION`.
 > di password e 8 script locali. La 0.5.0 ha introdotto il **comando unico** `sudo ops-installa`, collaudato su una
 > VM 26.04.1 da zero con esito "collaudo locale completato con esclusioni (7.1 10.3 11.2 12.8); validazione per
 > produzione incompleta" e un difetto (D1). La 0.5.1 corregge D1; la 0.6.0 rende la Knowledge Base facoltativa, con
-> repository scelto dall'utente e lettura via HTTPS. Prove ancora mancanti: sezione "Collaudo".
+> repository scelto dall'utente e lettura via HTTPS. La 0.7.0 installa sempre quattro agenti di amministrazione con
+> sandbox (Claude Code, Codex CLI, Antigravity CLI, Gemini CLI) e fa scegliere quello della sessione; integra le
+> correzioni del collaudo 0.6.0. Prove ancora mancanti: sezione "Collaudo".
 
 ## Installazione (release identificata, integrità verificata)
 
@@ -17,22 +19,25 @@ Sulla macchina nuova, come **utente amministratore normale** creato dall'install
 non root), con l'impronta SHA-256 riportata nella pagina della release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.6.0/install.sh \
+curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.7.0/install.sh \
   | bash -s -- --sha256 <IMPRONTA> --check   # solo controllo: piano e conflitti, nessuna modifica
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.6.0/install.sh \
+curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.7.0/install.sh \
   | bash -s -- --sha256 <IMPRONTA>           # esecuzione (ripetibile)
 ```
 
-`install.sh` rifiuta root, scarica l'archivio della release `v0.6.0`, lo confronta con `SHA256SUMS` della release e
-con l'impronta passata a `--sha256`, lo estrae in `~/setup-server-linux-0.6.0` e avvia
-`sudo bootstrap.sh --admin <utente>` (sudo chiede la password). Claude Code e il suo login restano nell'account
-dell'amministratore. Opzione: `--owner "Nome"` (nome del proprietario usato nelle regole; di default il primo nome
-del campo GECOS).
+`install.sh` rifiuta root, scarica l'archivio della release `v0.7.0`, lo confronta con `SHA256SUMS` della release e
+con l'impronta passata a `--sha256`, lo estrae in `~/setup-server-linux-0.7.0` e avvia
+`sudo bootstrap.sh --admin <utente>` (sudo chiede la password). Gli agenti e i loro login restano nell'account
+dell'amministratore (Antigravity: programma di root in `/opt/ops-agenti`). Opzioni: `--owner "Nome"` (nome del
+proprietario usato nelle regole; di default il primo nome del campo GECOS), `--agente claude|codex|agy|gemini` (agente
+della sessione senza domanda finale).
 
-Alternativa manuale: scaricare `setup-server-linux-0.6.0.tar.gz` e `SHA256SUMS` dalla release,
+Alternativa manuale: scaricare `setup-server-linux-0.7.0.tar.gz` e `SHA256SUMS` dalla release,
 `sha256sum -c SHA256SUMS`, estrarre e lanciare `sudo ./bootstrap.sh --admin "$USER" [--check]`.
 
-Poi, in un **nuovo** terminale: `claude` → completare il login personale → un prompt all'agente (per esempio
+Alla fine il bootstrap chiede **"Con quale agente vuoi avviare la sessione? Claude Code / Codex CLI / Antigravity CLI /
+Gemini CLI"**. Poi `/srv/ops/bin/agente` (nei nuovi terminali: `agente`) guida il login personale **solo** di
+quell'agente (URL da aprire nel browser del PC), lo collauda e lo avvia in `/srv/ops`; un prompt all'agente (per esempio
 "completa la configurazione iniziale"). L'agente parte in `/srv/ops`, trova `docs/bootstrap/avanzamento.md` con
 `STATO: IN CORSO`, rileva i parametri, chiede **una sola volta** i dati mancanti, compila `host.conf` e indica il
 comando unico. Il proprietario lo lancia da una sessione SSH:
@@ -50,6 +55,19 @@ L'agente legge gli esiti in `/var/log/ops-installa/` senza sudo; nessun output d
 
 Sistemi: Ubuntu Server LTS; collaudo su macchina reale con **Ubuntu 26.04** (VM), prove automatiche in container
 24.04 e 26.04. Su 26.04 il client NTP predefinito è chrony (accettato dalla checklist).
+
+## Novità della 0.7.0 (agenti di amministrazione e correzioni del collaudo 0.6.0, 2026-10-06)
+
+| Novità o correzione | Dove |
+|---|---|
+| **Quattro agenti sempre installati**, ciascuno con programma reale, dipendenze, sandbox e permessi: Claude Code (npm, bubblewrap + socat), Codex CLI (npm, bubblewrap, config e regole), **Antigravity CLI** (Google, account personale gratuito; binario ufficiale con SHA-512 in `/opt/ops-agenti`, di root, profilo AppArmor mirato `ops-agy`, aggiornamenti da root con `ops-agy`), Gemini CLI (Google, chiave API; container podman rootless) | `bootstrap.sh`, `maint/ops-agy`, `payload/home/*` |
+| Domanda finale "Con quale agente vuoi avviare la sessione?" (`AGENTE` in `host.conf`) e comando unico **`agente`** per cambiarlo in seguito, senza reinstallare e senza toccare l'avanzamento: login guidato del solo agente scelto, collaudo operativo, avvio in `/srv/ops`, scelta di un altro agente se quello scelto non è utilizzabile | `bin/agente`, `bootstrap.sh` |
+| `cli-update`: ambiente e sandbox dei quattro senza login (`--ambiente`), collaudo operativo del solo agente della sessione (`--verify`: login, `AGENTS.md` con uscita 0, prova di isolamento); un agente non autenticato, senza abbonamento o con quota esaurita non blocca. Integra la correzione locale della VM (commit `96f2579`): `host.conf` letto senza eseguirlo, dichiarazioni doppie respinte, uscita non zero = fallimento; `AGENTI_CLI="codex"` della VM resta accettato | `bin/cli-update` |
+| Codex: bubblewrap tra i prerequisiti, `workspace-write` + `on-request`, regole `allow` per i comandi ordinari (eseguiti fuori dalla sandbox senza richiesta), `sudo` vietato; nessun `danger-full-access` | `codex-config.toml`, `codex-ops.rules` |
+| `kb sync` distingue la rete chiusa della sandbox di Codex ("limite della sandbox, non un guasto") da un guasto reale; il successo è solo la riga "sincronizzata:" | `bin/kb` |
+| `quick-check`: per ogni agente conta solo l'ultimo esito (il vecchio fallimento di Claude non resta segnalato); login mancante solo per l'agente della sessione | `bin/quick-check` |
+| Profilo `ops-bwrap` solo dove Ubuntu non ha un profilo per `/usr/bin/bwrap` (24.04) e la restrizione dei namespace è attiva | `bootstrap.sh`, `ops-agy profilo bwrap` |
+| Blocco `~/.bash_aliases` delle versioni 0.1.0–0.6.0 aggiornato senza conflitto (funzioni `agente`, `agy` da `/opt`) | `bootstrap.sh` |
 
 ## Novità della 0.6.0 (Knowledge Base facoltativa via HTTPS, 2026-10-05)
 
@@ -147,9 +165,9 @@ lo richiede: `npm view @anthropic-ai/claude-code@stable version engines` → `2.
 
 | Fa | Non fa |
 |---|---|
-| installa `git curl ca-certificates gnupg jq` e Node.js 22 da NodeSource (chiave verificata per impronta) | partizionare, formattare, montare dischi |
-| crea `/srv/ops` (repository Git) con regole, adattatori, documenti, checklist, script, `host.conf` | toccare rete, SSH, firewall, utenti, hostname |
-| installa Claude Code (npm, canale `stable`, autoaggiornamento disattivato) per l'amministratore | attivare timer o servizi: tutte le unit `ops-*` restano disabilitate |
+| installa `git curl ca-certificates gnupg jq`, i componenti delle sandbox (`bubblewrap socat podman uidmap slirp4netns passt apparmor`) e Node.js 22 da NodeSource (chiave verificata per impronta) | partizionare, formattare, montare dischi |
+| crea `/srv/ops` (repository Git) con regole, adattatori, documenti, checklist, script, `host.conf` | toccare rete, SSH, firewall, gruppi o privilegi degli utenti, hostname |
+| installa i quattro agenti (Claude Code, Codex CLI, Gemini CLI con npm per l'amministratore; Antigravity CLI da root in `/opt/ops-agenti`), autoaggiornamento disattivato, sandbox e permessi configurati; profili AppArmor mirati `ops-agy` e, solo dove manca quello di Ubuntu, `ops-bwrap`; intervalli subuid/subgid per podman rootless | attivare timer o servizi: tutte le unit `ops-*` restano disabilitate; attivare servizi a pagamento; disattivare restrizioni globali di Ubuntu |
 | aggiunge nella home un blocco marcato in `~/.bash_aliases`, `~/CLAUDE.md` di solo rimando, le impostazioni di Claude | copiare istruzioni nella home (l'unica fonte è `/srv/ops/AGENTS.md`) |
 | installa i file della manutenzione con `/srv/ops/maint/install-maint install` e il comando unico `/usr/local/sbin/ops-installa` con le impronte del pacchetto in `/var/lib/ops-bootstrap` | installare applicazioni, Docker, backup, agenti applicativi (Docker e backup li installa `ops-installa`, lanciato dal proprietario dopo la dichiarazione dei parametri) |
 
@@ -183,6 +201,29 @@ finestra va approvata per ogni macchina), `sqlite-snapshots.sh` (file root del s
 verificato: va estratto con sudo, riletto e parametrizzato prima di includerlo).
 
 ## Collaudo
+
+**0.7.0 — esito delle prove (2026-10-06): 311/311 su `ubuntu:24.04` e `ubuntu:26.04`** (`tests/agenti-scenario.sh` più le
+prove delle versioni precedenti). Distinzione:
+- **Prove simulate** (CLI finti, nessun modello contattato): agente della sessione e compatibilità `AGENTI_CLI`; altri
+  agenti senza login che non bloccano; uscita non zero con testo atteso (consegna 0.6.0); quota esaurita; login
+  mancante; isolamento violato (ripiego fuori dalla sandbox) e "NON DIMOSTRATO"; ambiente non conforme per bubblewrap,
+  sandbox di Codex, podman, impostazioni di Claude, Antigravity e Gemini CLI; esecuzione con ambiente vuoto (timer);
+  aggiornamento (Antigravity mai da `cli-update`); `quick-check` sull'ultimo esito; comando `agente` (domanda, login del
+  solo agente scelto, collaudo, commit, avvio, ripiego su un altro, input terminato); `kb sync` nella sandbox di Codex;
+  `ops-installa --piano` con `AGENTE`.
+- **Prove reali in container** (pacchetti, npm e download veri; nessun login; Docker non permette namespace): i quattro
+  agenti installati ed eseguibili senza shell interattiva; Antigravity 1.3.0 dal manifest ufficiale con SHA-512 in
+  `/opt/ops-agenti` (`root:root 755`, non scrivibile dall'amministratore, nessuna modifica a PATH e profili);
+  componenti delle sandbox e subuid/subgid; configurazioni dei quattro; regole di Codex con `codex execpolicy check`
+  reale; profili `ops-agy` e `ops-bwrap` accettati da `apparmor_parser`; blocco `.bash_aliases` della 0.6.0 aggiornato;
+  domanda finale con risposta non valida e valida. In container bubblewrap e podman **non** creano namespace:
+  "AMBIENTE NON CONFORME" atteso.
+- **Prove reali sul server di origine** (senza modifiche ad AppArmor): restrizione dei namespace attiva; Codex senza
+  bubblewrap di Ubuntu non avvia la sandbox; Antigravity 1.2.16 senza profilo non avvia la sandbox
+  (`sbox: bringLoopbackUp: … operation not permitted`) e ripiega fuori; regole di Codex con `codex execpolicy`.
+- **Non provato** (prossima VM): sandbox di Antigravity con `ops-agy`, flusso `agente` con login reale da SSH,
+  `ops-bwrap` su 24.04 reale, Gemini CLI in podman rootless, `ops-agy update`/`rollback` reali, successo della
+  sincronizzazione KB dal cron (visto partire, successo non dimostrato).
 
 **Fatto — in container (0.6.0).** `tests/run-container-test.sh` (Docker, container usa e getta senza systemd;
 `IMAGE=ubuntu:26.04` per la 26.04): **241/241 prove superate sia su `ubuntu:24.04` sia su `ubuntu:26.04`** (0.5.1: 203/203). `tests/kb-https-scenario.sh` (prove SIMULATE: server

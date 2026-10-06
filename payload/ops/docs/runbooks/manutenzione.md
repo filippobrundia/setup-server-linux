@@ -112,14 +112,20 @@ Creato da ogni errore. Un agente verifica (`history.log`, `apt-window.log`, `sys
 3. Con interruzioni (Docker, kernel, servizi): `bin/maint-approve PACCHETTO…` → finestra.
 4. VERIFY e registrazione (CHANGELOG, `STATUS.md`).
 
-## CLI amministrativi
+## Agenti di amministrazione (CLI)
 
-| Strumento | Installazione | Autoaggiornamento in background | Aggiornamento |
+Installati sempre tutti e quattro (dettagli, login e sandbox: `docs/runbooks/agenti.md`).
+
+| Agente | Installazione | Autoaggiornamento in background | Aggiornamento |
 |---|---|---|---|
-| Claude Code (iniziale) | npm `~/.npm-global`, Node.js 22 da NodeSource | disattivato: `~/.claude/settings.json` → `env.DISABLE_AUTOUPDATER=1`, `autoUpdatesChannel=stable` | versione npm `stable`, solo se più nuova |
-| Codex (facoltativo) | npm `~/.npm-global` | nessuno | npm `latest` |
-| Antigravity (facoltativo) | `~/.local/bin/agy` | disattivato: `AGY_CLI_DISABLE_AUTO_UPDATE=true` | `agy update` |
+| Claude Code | npm `~/.npm-global`, Node.js 22 da NodeSource | disattivato: `env.DISABLE_AUTOUPDATER=1`, `autoUpdatesChannel=stable` | `cli-update`, npm `stable` |
+| Codex CLI | npm `~/.npm-global` | nessuno | `cli-update`, npm `latest` |
+| Gemini CLI | npm `~/.npm-global` | disattivato: `general.enableAutoUpdate=false` | `cli-update`, npm `latest` (l'immagine della sandbox segue la versione: `podman pull`) |
+| Antigravity CLI | root, `/opt/ops-agenti/antigravity/agy` (non scrivibile dall'amministratore) | impossibile (cartella di root) e disattivato: `AGY_CLI_DISABLE_AUTO_UPDATE=true` | `ops-agy update` (root, `ops-agy-update.timer`, domenica 05:45 UTC): manifest ufficiale, SHA-512, versione precedente in `agy.prev`, `sudo ops-agy rollback` |
 
-`cli-update` aggiorna solo gli strumenti installati, un programma alla volta; se il programma è in uso rinvia;
-dopo l'aggiornamento verifica permessi e caricamento di `AGENTS.md` con un prompt di prova non interattivo; se la
-verifica fallisce reinstalla la versione precedente. `cli-update --verify` fa solo la verifica.
+`cli-update` aggiorna Claude Code, Codex e Gemini CLI un programma alla volta; se il programma è in uso rinvia; dopo
+l'aggiornamento verifica ambiente e sandbox e, se il login c'è, il caricamento di `AGENTS.md` (prompt di prova non
+interattivo, uscita 0); se la verifica fallisce reinstalla la versione precedente. `cli-update --ambiente` verifica
+ambiente e sandbox dei quattro senza login; `cli-update --verify` aggiunge il collaudo operativo dell'agente della
+sessione (`AGENTE` in `host.conf`). `install-maint enable cli-update` attiva insieme `ops-cli-update.timer` e
+`ops-agy-update.timer`, solo se `cli-update --verify` e `ops-agy verify` sono superati.

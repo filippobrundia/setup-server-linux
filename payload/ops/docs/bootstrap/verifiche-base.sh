@@ -12,7 +12,7 @@
 #   healthchecks  11.2  controllo Healthchecks "up"
 #   dopo-riavvio  12.4  montaggi, unit, journal del boot precedente, servizi, container, UFW
 #   monitoraggio  12.6  quick-check senza ERRORE; Healthchecks "up" se 11.2 non è escluso
-#   agenti        12.7  cli-update --verify (AGENTS.md caricato, permessi conformi)
+#   agenti        12.7  cli-update --verify: ambiente dei quattro agenti, collaudo operativo di quello della sessione
 # Esito 0 = superata, 1 = non superata (righe KO), 2 = uso errato. Nessuna modifica al sistema.
 set -euo pipefail
 
@@ -136,7 +136,9 @@ v_agenti() {
   local out rc=0
   out=$(as_admin "$OPS/bin/cli-update" --verify 2>&1) || rc=$?
   echo "$out" | sed 's/^/  /'
-  [ "$rc" -eq 0 ] && ok "cli-update --verify superato" || ko "cli-update --verify: uscita $rc (login degli agenti, permessi o caricamento di AGENTS.md)"
+  [ "$rc" -eq 0 ] && ok "cli-update --verify superato (agente della sessione utilizzabile)" \
+    || ko "cli-update --verify: uscita $rc (agente della sessione: login, ambiente, sandbox o AGENTS.md; per sceglierne un altro: agente)"
+  ! grep -q 'ATTENZIONE, AMBIENTE NON CONFORME' <<<"$out" || nota "un altro agente ha l'ambiente non conforme: non blocca, da correggere (dettagli sopra)"
 }
 
 case "${1:-}" in

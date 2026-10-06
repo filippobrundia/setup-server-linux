@@ -74,7 +74,7 @@ STEPS=(
   "12|12|Accessi, ripristino di /srv/ops, montaggi|script1:passo12-verifiche.sh"
   "12.4|12|Riavvio presidiato e controlli dopo l'avvio|riavvio"
   "12.6|12|Monitoraggio dopo il riavvio|verifica:monitoraggio"
-  "12.7|12|Agenti (cli-update --verify)|verifica:agenti"
+  "12.7|12|Agenti: ambiente di tutti, collaudo di quello della sessione|verifica:agenti"
   "12.8|12|Attivazione della manutenzione automatica|attivazione"
 )
 ROLLBACK_SCRIPTS="3=passo3-cartelle.sh 5=passo5-utenti.sh 6=passo6-pacchetti.sh 7=passo7-impostazioni.sh 8=passo8-docker.sh 9=passo9-manutenzione.sh 10=passo10-backup.sh 10b=passo10b-rotazione-verifica.sh"
@@ -134,6 +134,16 @@ load_params() {  # $1 = file passi-comune.sh da usare; raccoglie TUTTI i problem
   if ! excluded 10.3; then [ -n "$OFFSITE" ] || PROBLEMI+=("OFFSITE vuoto: destinazione della copia remota (o 10.3 in ESCLUSIONI)"); fi
   # senza copia remota la manutenzione automatica resta bloccata (quick-check --gate): 12.8 non è eseguibile
   if excluded 10.3 && ! excluded 12.8; then PROBLEMI+=("10.3 in ESCLUSIONI: la copia remota mancante blocca finestra e ops-maint attended, aggiungere anche 12.8 a ESCLUSIONI"); fi
+  # agente della sessione, collaudato nel passo 12.7 (cli-update legge la stessa riga senza eseguire host.conf);
+  # compatibilità: AGENTI_CLI della correzione locale 0.6.0 (primo nome)
+  local n l
+  for n in AGENTE AGENTI_CLI; do [ "$(grep -cE "^$n=" "$HOSTCONF")" -le 1 ] || PROBLEMI+=("$n dichiarato più volte: lasciarne una sola riga"); done
+  AGENTE=$(hc_get AGENTE); [ -n "$AGENTE" ] || { l=$(hc_get AGENTI_CLI); AGENTE=${l%% *}; }
+  case $AGENTE in
+    claude|codex|agy|gemini) ;;
+    "") PROBLEMI+=("AGENTE vuoto: agente della sessione da scegliere con il comando agente (claude, codex, antigravity, gemini)") ;;
+    *) PROBLEMI+=("AGENTE non valido: $AGENTE (claude codex agy gemini)") ;;
+  esac
   return 0
 }
 
@@ -408,6 +418,7 @@ print_plan() {
   say "Configurazione iniziale di $HOST — amministratore $ADMIN, profilo ${PROFILO:-?}, pacchetto $(cat "$OPS/.bootstrap/version" 2>/dev/null || echo ?)"
   say "Parametri: LAN_CIDR=$LAN_CIDR DATA_MOUNT=$DATA_MOUNT MOUNTS=\"$MOUNTS\" SERVICES=\"$SERVICES\" OFFSITE=${OFFSITE:-(vuoto)}"
   say "Esclusioni dichiarate: ${ESCLUSIONI:-nessuna}"
+  say "Agente della sessione (collaudo operativo in 12.7; gli altri tre: solo ambiente e sandbox): ${AGENTE:-(da scegliere con: agente)}"
   [ -z "$ESCLUSIONI" ] || say "Con esclusioni l'esito possibile è \"collaudo locale completato con esclusioni\": la validazione per produzione resta incompleta."
   ! excluded 10.3 || say "10.3 esclusa: la copia remota mancante continua a bloccare quick-check --gate, ops-maint attended e la finestra automatica."
   for line in "${STEPS[@]}"; do

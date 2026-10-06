@@ -32,9 +32,9 @@ collaudo finale (sezione 12) è superato e il file riporta `STATO: COMPLETATO`.
 
 ## Politica di amministrazione (vincolante per ogni agente)
 
-Autorizzazione permanente di @@OWNER@@ (2026-09-27), valida per Claude, Codex, Antigravity e ogni futuro agente
-amministratore. @@OWNER@@ non fa da tramite tra agenti e non decide dettagli tecnici: gli agenti investigano,
-scelgono la soluzione e la eseguono entro questi limiti.
+Autorizzazione permanente di @@OWNER@@ (2026-09-27), valida per Claude Code, Codex CLI, Antigravity CLI, Gemini CLI
+e ogni futuro agente amministratore. @@OWNER@@ non fa da tramite tra agenti e non decide dettagli tecnici: gli agenti
+investigano, scelgono la soluzione e la eseguono entro questi limiti.
 
 ### Autorizzato senza chiedere
 - **Sola lettura, sempre**: file e configurazioni, log, stato dei servizi, versioni, repository, backup,
@@ -96,6 +96,14 @@ chiedergli come risolvere tecnicamente il problema.
   impronta, log in `/var/log/ops-installa/`). Nessun sudo
   senza password generalizzato, nessuna modalità globale che salta le approvazioni degli strumenti; i lavori
   programmati girano con i privilegi minimi (codice eseguito da root solo in `/usr/local/sbin`, di proprietà di root).
+- **Sandbox e permessi degli agenti**: ogni agente lavora nella propria sandbox (Claude Code e Codex con bubblewrap,
+  Antigravity con i namespace del kernel e il profilo AppArmor `ops-agy`, Gemini CLI in un container podman rootless)
+  e i comandi ordinari che la sandbox non permette sono già consentiti uno per uno (`quick-check`, `kb sync|status|
+  index|search`, `cli-update --verify`, `git add|commit`, `systemctl`/`journalctl` in lettura); `sudo` è vietato.
+  Non chiedere di disattivare la sandbox né di uscirne per comodità: se un'operazione autorizzata la richiede,
+  usa la richiesta di approvazione dello strumento per quel solo comando. Un errore di rete o di scrittura dentro la
+  sandbox è un limite della sandbox, non un guasto del server: verificalo con il comando consentito prima di
+  concludere. Dettagli: `docs/runbooks/agenti.md`.
 - **APT**: rispettare i blocchi (`DPkg::Lock::Timeout`), mai aggirarli; non sovrapporsi ai backup
   (03:00–04:10 UTC) né agli aggiornamenti automatici (06:00–07:00 UTC circa).
 - **File bind-montati nei container**: non sovrascriverli con rename atomico — vedi
@@ -122,7 +130,9 @@ Da un server collegato via HTTPS non si pubblicano record (`kb publish` lo rifiu
 server autorizzati.
 
 **SYNC BEFORE WORK.** All'inizio di ogni incarico tecnico eseguire `bin/kb sync` (se la KB non è configurata lo dice
-ed esce con 0). Senza rete si consulta la copia
+ed esce con 0). Il successo è solo la riga "sincronizzata: …": l'uscita 0 da sola non lo prova (anche con la copia
+locale esce con 0). Se `kb sync` dice "rete non disponibile nella SANDBOX" è un limite della sandbox, non un guasto:
+il comando consentito fuori dalla sandbox lo ripete. Senza rete si consulta la copia
 locale dichiarando che potrebbe non essere aggiornata. La sincronizzazione non modifica mai i programmi installati e
 non esegue script della Knowledge Base.
 
@@ -184,16 +194,23 @@ registrali allo stesso modo prima di chiudere.
 | `bin/quick-check` | Controllo rapido dello stato del server (sola lettura) |
 | `maint/`, `bin/cli-update`, `bin/maint-approve` | Manutenzione automatica: sorgenti, unit, `install-maint`, modelli (`docs/runbooks/manutenzione.md`) |
 
-## Adattatori per agenti specifici
+## Agenti di amministrazione e adattatori
+
+Sono installati sempre quattro agenti, che leggono tutti questo file e lo stesso stato del server (`/srv/ops`,
+`STATUS.md`, Knowledge Base); le conversazioni restano separate, ciascuna nel proprio strumento. L'**agente della
+sessione** è in `host.conf` (`AGENTE`): solo per lui servono il login di @@OWNER@@ e il collaudo operativo (passo 12.7);
+gli altri tre sono verificati nell'ambiente e nella sandbox, senza login. Per cambiarlo, senza reinstallare né perdere
+l'avanzamento, @@OWNER@@ usa il comando `agente` (guida il login solo dell'agente scelto). Un agente senza login, senza
+abbonamento o con quota esaurita non blocca il lavoro: si sceglie un altro. Nessun servizio a pagamento va attivato.
 
 Questo file è l'unica fonte di istruzioni. Adattatori, senza istruzioni proprie:
-- Claude Code: `CLAUDE.md` contiene solo `@AGENTS.md`; `~/CLAUDE.md` nella home contiene solo il rimando
-  `@/srv/ops/AGENTS.md`;
-- Codex: legge `AGENTS.md` direttamente;
-- Gemini CLI: `.gemini/settings.json` imposta `context.fileName` = `AGENTS.md`. Il login personale ("Login with
-  Google") è stato dismesso da Google (2026-09-27); sostituto: Antigravity CLI;
-- Antigravity CLI (`agy`): legge nativamente `AGENTS.md` della cartella di lavoro, nessun adattatore. Non creare
-  `GEMINI.md`, `.agents/rules/` né regole globali in `~/.gemini/` (verrebbero sommate).
-Dalla home, `claude`, `codex`, `gemini` e `agy` sono funzioni di shell (`~/.bash_aliases`) che avviano lo
-strumento in `/srv/ops`; lo strumento iniziale è Claude Code, gli altri sono facoltativi. Non duplicare
-istruzioni negli adattatori né nelle memorie globali degli strumenti.
+- Claude Code (`claude`, account Anthropic): `CLAUDE.md` contiene solo `@AGENTS.md`; `~/CLAUDE.md` nella home contiene
+  solo il rimando `@/srv/ops/AGENTS.md`;
+- Codex CLI (`codex`, account ChatGPT/OpenAI): legge `AGENTS.md` direttamente; regole in `~/.codex/rules/ops.rules`;
+- Antigravity CLI (`agy`, Google, account personale gratuito): legge nativamente `AGENTS.md`; programma di root in
+  `/opt/ops-agenti/antigravity` (aggiornato da `ops-agy`). Non creare `GEMINI.md`, `.agents/rules/` né regole globali in
+  `~/.gemini/` oltre a quelle del pacchetto (verrebbero sommate);
+- Gemini CLI (`gemini`, Google, chiave API di AI Studio): `.gemini/settings.json` imposta `context.fileName` =
+  `AGENTS.md`; il login personale ("Login with Google") è stato dismesso da Google il 2026-06-18.
+Dalla home, `claude`, `codex`, `agy`, `gemini` e `agente` sono funzioni di shell (`~/.bash_aliases`) che lavorano in
+`/srv/ops`. Non duplicare istruzioni negli adattatori né nelle memorie globali degli strumenti.

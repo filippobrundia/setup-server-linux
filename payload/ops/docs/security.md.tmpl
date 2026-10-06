@@ -2,3 +2,11 @@
 
 Rischi noti e posizioni dei segreti (mai i valori). Da compilare durante la configurazione iniziale con quanto verificato sul sistema
 reale (checklist in `docs/bootstrap/configurazione-server-base.md`).
+
+Posizioni già note dal pacchetto (credenziali personali dell'amministratore, mai in `/srv/ops`):
+
+| Segreto | Posizione |
+|---|---|
+| Login di Claude Code, Codex CLI, Antigravity CLI | `~/.claude/`, `~/.codex/auth.json`, `~/.gemini/antigravity-cli/antigravity-oauth-token` (0600) |
+| Chiave API di Gemini CLI | `~/.gemini/.env` (0600) |
+| Token di lettura della Knowledge Base | `~/.config/ops-kb/token` (0600) |

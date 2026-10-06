@@ -1,0 +1,10 @@
+[Unit]
+Description=ops: aggiornamento settimanale di Antigravity CLI (domenica 05:45 UTC)
+
+[Timer]
+OnCalendar=Sun *-*-* 05:45:00 UTC
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,58 @@
+# ops: regole di Codex per l'amministrazione di /srv/ops (gestite da setup-server-linux; non modificare: le aggiunte
+# locali vanno in un altro file di ~/.codex/rules/). "allow" = eseguito FUORI dalla sandbox senza richiesta: solo
+# comandi in sola lettura o già autorizzati da /srv/ops/AGENTS.md. Tutto il resto resta nella sandbox o chiede
+# approvazione. Prova: codex execpolicy check --pretty --rules ~/.codex/rules/ops.rules -- <comando>
+
+prefix_rule(
+    pattern = ["/srv/ops/bin/quick-check"],
+    decision = "allow",
+    justification = "controllo rapido in sola lettura: legge systemd e journal, non raggiungibili dalla sandbox",
+    match = ["/srv/ops/bin/quick-check", "/srv/ops/bin/quick-check --gate"],
+)
+
+prefix_rule(
+    pattern = ["/srv/ops/bin/kb", ["sync", "status", "index", "search"]],
+    decision = "allow",
+    justification = "Knowledge Base: lettura dal repository remoto (la rete della sandbox è chiusa)",
+    match = ["/srv/ops/bin/kb sync", "/srv/ops/bin/kb search borg"],
+    not_match = ["/srv/ops/bin/kb publish RECORD-x", "/srv/ops/bin/kb token"],
+)
+
+prefix_rule(
+    pattern = ["/srv/ops/bin/cli-update", "--verify"],
+    decision = "allow",
+    justification = "verifica degli agenti: scrive i log in ~/.local/state/ops (home in sola lettura nella sandbox)",
+)
+
+prefix_rule(
+    pattern = ["git", ["add", "commit", "status", "diff", "log"]],
+    decision = "allow",
+    justification = "registrazione degli interventi in /srv/ops (AGENTS.md, regola di manutenzione): .git è protetto nella sandbox",
+    match = ["git add -A", "git commit -m 'CHANGELOG'"],
+    not_match = ["git push", "git -c core.hooksPath=/tmp commit -m x", "git reset --hard"],
+)
+
+prefix_rule(
+    pattern = ["git", "-C", "/srv/ops", ["add", "commit", "status", "diff", "log"]],
+    decision = "allow",
+    justification = "come sopra, con il repository indicato esplicitamente",
+)
+
+prefix_rule(
+    pattern = ["systemctl", ["status", "is-active", "is-enabled", "is-failed", "list-units", "list-unit-files", "list-timers", "show", "cat"]],
+    decision = "allow",
+    justification = "stato dei servizi in sola lettura (il bus di systemd non è raggiungibile dalla sandbox)",
+    not_match = ["systemctl restart ssh", "systemctl --user start x"],
+)
+
+prefix_rule(
+    pattern = ["journalctl"],
+    decision = "allow",
+    justification = "log di sistema in sola lettura (senza root le opzioni di modifica falliscono)",
+)
+
+prefix_rule(
+    pattern = ["sudo"],
+    decision = "forbidden",
+    justification = "sudo lo lancia il proprietario in un terminale vero (AGENTS.md): preparare lo script e chiederlo a lui",
+)

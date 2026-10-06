@@ -1,114 +1,213 @@
 #!/usr/bin/env bash
-# cli-update — aggiornamento controllato dei CLI amministrativi (Claude Code, Codex, Antigravity).
-# Utente amministratore, senza sudo; avviato settimanalmente da ops-cli-update.timer (o a mano).
-# Solo gli strumenti installati: quelli assenti vengono saltati.
-#   cli-update            aggiorna (un programma alla volta)
-#   cli-update --verify   nessun aggiornamento: verifica permessi e caricamento di AGENTS.md degli strumenti
-#                         installati (prerequisito di install-maint enable cli-update)
-# Un programma alla volta: se è in uso non si tocca; dopo l'aggiornamento verifica versione, permessi e
-# caricamento di /srv/ops/AGENTS.md; se la verifica fallisce torna alla versione precedente.
-# Documentazione: /srv/ops/docs/runbooks/manutenzione.md
+# cli-update — aggiornamento e verifica controllati degli agenti di amministrazione (utente amministratore, senza sudo).
+# Agenti installati sempre tutti: claude (Claude Code), codex (Codex CLI), agy (Antigravity CLI), gemini (Gemini CLI).
+# Agente della sessione: AGENTE in host.conf (letto senza eseguire il file; compatibilità: primo nome di AGENTI_CLI).
+#   cli-update                 aggiorna Claude Code, Codex e Gemini CLI (npm, uno alla volta); Antigravity è di root e
+#                              lo aggiorna ops-agy-update.timer. Avviato settimanalmente da ops-cli-update.timer.
+#   cli-update --ambiente [N]  ambiente e sandbox dei quattro agenti (o di N), SENZA login: programma, permessi,
+#                              componenti e prova della sandbox. Esito 0 se tutto conforme.
+#   cli-update --verify [N]    ambiente di tutti (i problemi degli altri agenti sono ATTENZIONI, non bloccano) e collaudo
+#                              operativo dell'agente della sessione (o di N): login, AGENTS.md caricato con uscita 0,
+#                              isolamento della sandbox. Esito 0 se l'agente collaudato è utilizzabile. Passo 12.7.
+#   cli-update --stato         una riga per agente: installato, ambiente, login (nessuna chiamata ai modelli)
+# Un agente senza login, senza abbonamento o con quota esaurita non blocca gli altri: se ne sceglie un altro con "agente".
+# Documentazione: /srv/ops/docs/runbooks/agenti.md, /srv/ops/docs/runbooks/manutenzione.md
 set -u
-export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+export PATH="$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
 export AGY_CLI_DISABLE_AUTO_UPDATE=true DISABLE_AUTOUPDATER=1
 WORK="$HOME/.local/state/ops/cli-update"; mkdir -p "$WORK"
 LOCK=${MAINT_LOCK:-/run/lock/ops-maint.lock}     # condiviso con la finestra di manutenzione (root)
 MAINT=${MAINT_BIN:-/usr/local/sbin/ops-maint}
+HOSTCONF=${OPS_HOSTCONF:-/srv/ops/host.conf}
+AGY=${OPS_AGY_BIN:-/opt/ops-agenti/antigravity/agy}
+OPS_AGY=${OPS_AGY_CMD:-/usr/local/sbin/ops-agy}
 DRY=${DRY_RUN:-0}
+TUTTI="claude codex agy gemini"
 PROMPT="Rispondi solo con ciò che sai già dal contesto iniziale, senza eseguire comandi né leggere file. Da quale file vengono le istruzioni di progetto che hai ricevuto all'avvio? Qual è la sequenza obbligatoria per gli interventi importanti?"
 
 log() { local m; m="$(date -u '+%F %T') cli-update: $*"; echo "$m"; echo "$m" >> "$WORK/cli-update.log"; }
 newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$2" ]; }  # $2 > $1
+etichetta() { case $1 in claude) echo "Claude Code" ;; codex) echo "Codex CLI" ;; agy) echo "Antigravity CLI" ;; gemini) echo "Gemini CLI" ;; esac; }
+bin_of() { case $1 in agy) echo "$AGY" ;; *) echo "$1" ;; esac; }
 
-installed() {  # $1 = strumento
-  case $1 in
-    claude|codex) command -v "$1" >/dev/null ;;
-    agy) [ -x "$HOME/.local/bin/agy" ] ;;
-  esac
+# ------------------------------------------------------------------ agente della sessione (host.conf non eseguito)
+hc_val() {  # $1 chiave: valore dell'unica dichiarazione; esito 2 se dichiarata più volte
+  local n; n=$(awk -F= -v k="$1" '$1 == k {n++} END {print n+0}' "$HOSTCONF" 2>/dev/null)
+  [ "${n:-0}" -le 1 ] || return 2
+  awk -F= -v k="$1" '$1 == k {v = substr($0, index($0, "=") + 1); sub(/[ \t]+#.*$/, "", v); gsub(/"/, "", v); print v}' "$HOSTCONF" 2>/dev/null
+}
+agente_sessione() {  # stampa il nome tecnico; esito 1 con il motivo se assente o non valido
+  local a l
+  [ -f "$HOSTCONF" ] || { echo "manca $HOSTCONF"; return 1; }
+  a=$(hc_val AGENTE) || { echo "AGENTE dichiarato più volte in host.conf"; return 1; }
+  if [ -z "$a" ]; then   # compatibilità con la correzione locale della 0.6.0 (AGENTI_CLI="codex")
+    l=$(hc_val AGENTI_CLI) || { echo "AGENTI_CLI dichiarato più volte in host.conf"; return 1; }
+    a=${l%% *}
+  fi
+  [ -n "$a" ] || { echo "nessun agente della sessione (AGENTE vuoto in host.conf): sceglierlo con il comando agente"; return 1; }
+  case $a in claude|codex|agy|gemini) echo "$a" ;; *) echo "AGENTE non valido: $a (claude codex agy gemini)"; return 1 ;; esac
 }
 
+# ------------------------------------------------------------------ controlli (nessun login richiesto)
+installed() { if [ "$1" = agy ]; then [ -x "$AGY" ]; else command -v "$1" >/dev/null; fi; }
+version_of() { env -i HOME="$HOME" PATH="$PATH" AGY_CLI_DISABLE_AUTO_UPDATE=true timeout 60 "$(bin_of "$1")" --version 2>/dev/null | head -n 1; }
+perms_ok() {  # nessuna modalità che salta approvazioni o sandbox, nessun autoaggiornamento in background
+  local f
+  case $1 in
+    claude) f=$HOME/.claude/settings.json
+            ! grep -qE '"(bypassPermissions|dangerously[A-Za-z]*)"' "$f" && grep -q '"DISABLE_AUTOUPDATER": *"1"' "$f" \
+              && jq -e '.sandbox.enabled == true and .sandbox.failIfUnavailable == true and .sandbox.allowUnsandboxedCommands == false' "$f" >/dev/null 2>&1 ;;
+    codex)  f=$HOME/.codex/config.toml
+            [ -f "$f" ] && ! grep -qsE 'danger-full-access|approval_policy *= *"never"|dangerously' "$f" && [ -f "$HOME/.codex/rules/ops.rules" ] ;;
+    agy)    f=$HOME/.gemini/antigravity-cli/settings.json
+            jq -e '.enableTerminalSandbox == true and (.toolPermission == "proceed-in-sandbox" or .toolPermission == "request-review")
+                   and ([.permissions.deny[]? | select(test("sudo"))] | length > 0)' "$f" >/dev/null 2>&1 ;;
+    gemini) f=$HOME/.gemini/settings.json
+            jq -e '.tools.sandbox == "podman" and (.general.defaultApprovalMode // "default") != "yolo" and .general.enableAutoUpdate == false' "$f" >/dev/null 2>&1 ;;
+  esac
+}
+bwrap_ok() {  # bubblewrap crea i namespace (loopback di rete compreso) senza privilegi: profilo AppArmor adeguato
+  command -v bwrap >/dev/null && bwrap --ro-bind / / --dev /dev --proc /proc --unshare-all --die-with-parent true > "$WORK/bwrap.txt" 2>&1
+}
+codex_sandbox_ok() {  # la sandbox di Codex parte, legge /srv/ops e NON scrive nella home
+  local probe="$HOME/.ops-sandbox-probe-$$" out="$WORK/sandbox-codex.txt"
+  rm -f "$probe"
+  (cd /srv/ops && timeout 60 codex sandbox -C /srv/ops -P :workspace -- sh -c 'test -r /srv/ops/AGENTS.md') < /dev/null > "$out" 2>&1 \
+    || { echo "la sandbox di Codex non parte o non legge /srv/ops ($(tail -n 1 "$out"))"; return 1; }
+  (cd /srv/ops && timeout 60 codex sandbox -C /srv/ops -P :workspace -- sh -c ": > '$probe'") < /dev/null >> "$out" 2>&1
+  if [ -e "$probe" ]; then rm -f "$probe"; echo "la sandbox di Codex scrive nella home"; return 1; fi
+}
+gemini_image() { echo "us-docker.pkg.dev/gemini-code-dev/gemini-cli/sandbox:$(version_of gemini)"; }
+ambiente() {  # $1 agente: stampa il motivo ed esce con 1 se non conforme
+  local a=$1 m
+  installed "$a" || { echo "non installato ($(bin_of "$a"))"; return 1; }
+  [ -n "$(version_of "$a")" ] || { echo "non si avvia senza shell interattiva"; return 1; }
+  perms_ok "$a" || { echo "configurazione di sandbox, permessi o aggiornamenti non conforme"; return 1; }
+  case $a in
+    claude) command -v socat >/dev/null || { echo "socat assente (sandbox di Claude Code)"; return 1; }
+            bwrap_ok || { echo "bubblewrap assente o senza namespace: $(tail -n 1 "$WORK/bwrap.txt" 2>/dev/null)"; return 1; } ;;
+    codex)  bwrap_ok || { echo "bubblewrap assente o senza namespace: $(tail -n 1 "$WORK/bwrap.txt" 2>/dev/null)"; return 1; }
+            m=$(codex_sandbox_ok) || { echo "$m"; return 1; } ;;
+    agy)    m=$("$OPS_AGY" verify 2>&1) || { echo "ops-agy verify: $(grep '^KO' <<<"$m" | head -n 2 | paste -sd';' -)"; return 1; } ;;
+    gemini) command -v podman >/dev/null || { echo "podman assente (sandbox di Gemini CLI)"; return 1; }
+            podman unshare true > "$WORK/podman.txt" 2>&1 || { echo "podman rootless non funziona: $(tail -n 1 "$WORK/podman.txt")"; return 1; }
+            podman image exists "$(gemini_image)" 2>/dev/null || { echo "immagine della sandbox assente: podman pull $(gemini_image)"; return 1; } ;;
+  esac
+}
+auth_ok() {  # login presente, senza chiamate ai modelli
+  case $1 in
+    claude) claude auth status 2>/dev/null | grep -qE '"loggedIn": *true' ;;
+    codex)  codex login status >/dev/null 2>&1 ;;
+    agy)    [ -s "$HOME/.gemini/antigravity-cli/antigravity-oauth-token" ] ;;   # sui server senza portachiavi grafico
+    gemini) [ -n "${GEMINI_API_KEY:-}" ] || grep -qE '^GEMINI_API_KEY=.+' "$HOME/.gemini/.env" 2>/dev/null ;;
+  esac
+}
+login_hint() {
+  case $1 in
+    claude) echo "agente claude (URL da aprire nel browser del PC)" ;;
+    codex)  echo "agente codex (codex login --device-auth: URL e codice nel browser del PC)" ;;
+    agy)    echo "agente agy (URL nel browser del PC, poi il codice di autorizzazione)" ;;
+    gemini) echo "agente gemini (chiave API di Google AI Studio, input nascosto)" ;;
+  esac
+}
+run_agent() {  # $1 agente, $2 prompt, $3 file di uscita: in /srv/ops, senza terminale; esito del programma
+  case $1 in
+    claude) (cd /srv/ops && timeout 300 claude -p "$2") ;;
+    codex)  (cd /srv/ops && timeout 300 codex exec -s read-only --ephemeral --color never "$2") ;;
+    agy)    (cd /srv/ops && timeout 300 "$AGY" --sandbox --print-timeout 240s --print="$2") ;;
+    gemini) (cd /srv/ops && timeout 300 gemini -p "$2") ;;
+  esac < /dev/null > "$3" 2>&1
+}
+smoke() {  # AGENTS.md caricato all'avvio: testo atteso E uscita 0 (correzione della consegna 0.6.0)
+  local out="$WORK/smoke-$1.txt"
+  run_agent "$1" "$PROMPT" "$out" || return 1
+  grep -q 'AGENTS.md' "$out" && grep -q 'PRECHECK' "$out"
+}
+isolamento() {  # l'agente esegue nella sua sandbox una scrittura nella home: il file NON deve comparire
+  local a=$1 probe="$HOME/.ops-sandbox-probe-$1-$$" out="$WORK/isolamento-$1.txt"
+  [ "$a" = codex ] && return 0   # Codex: prova deterministica già fatta in ambiente (codex sandbox)
+  rm -f "$probe"
+  run_agent "$a" "Prova di isolamento della sandbox. Usa lo strumento terminale ed esegui esattamente questo comando, senza alternative e senza chiedere di uscire dalla sandbox: touch '$probe' ; poi riporta testualmente l'output o l'errore." "$out" || true
+  if [ -e "$probe" ]; then rm -f "$probe"; log "$a: VERIFICA FALLITA, isolamento violato: la scrittura nella home è riuscita (dettagli in $out)"; return 1; fi
+  if grep -qiE 'read-only|permission denied|not permitted|EROFS|sola lettura|denied|negat' "$out"; then log "$a: isolamento dimostrato (scrittura nella home negata dalla sandbox)"
+  else log "$a: isolamento NON DIMOSTRATO: nessuna scrittura nella home, ma l'agente non ha riportato il rifiuto (dettagli in $out)"; fi
+}
+in_use() {  # processi reali dello strumento, di qualunque utente
+  local re
+  case $1 in claude) re='claude|claude-code' ;; codex) re='codex' ;; gemini) re='gemini' ;; agy) re='agy|antigravity' ;; esac
+  "$MAINT" procs | grep -qiE "($re)"
+}
 take_lock() {  # stesso blocco della finestra: mai durante manutenzione, installazioni o riavvii (e viceversa)
   exec 9<"$LOCK" || { log "RINVIO: blocco $LOCK assente (manutenzione non installata)"; exit 0; }
   flock -w 30 9 || { log "RINVIO: manutenzione o altro aggiornamento in corso"; exit 0; }
   [ -x "$MAINT" ] || { log "RINVIO: $MAINT assente"; exit 0; }
 }
-
-smoke() {  # $1 = strumento; verifica che AGENTS.md sia caricato all'avvio
-  local out="$WORK/smoke-$1.txt"
-  case $1 in
-    claude) (cd /srv/ops && timeout 300 claude -p "$PROMPT") ;;
-    codex)  (cd /srv/ops && timeout 300 codex exec -s read-only --ephemeral --color never "$PROMPT") ;;
-    agy)    (cd /srv/ops && timeout 300 agy --sandbox --print-timeout 240s --print="$PROMPT") ;;
-  esac < /dev/null > "$out" 2>&1
-  grep -q 'AGENTS.md' "$out" && grep -q 'PRECHECK' "$out"
-}
-perms_ok() {  # nessuna modalità globale che salta le approvazioni, nessun autoaggiornamento in background
-  case $1 in
-    claude) ! grep -qE '"(bypassPermissions|dangerously[A-Za-z]*)"' "$HOME/.claude/settings.json" \
-              && grep -q '"DISABLE_AUTOUPDATER": *"1"' "$HOME/.claude/settings.json" ;;
-    codex)  ! grep -qsE 'danger-full-access|approval_policy *= *"never"' "$HOME/.codex/config.toml" ;;
-    agy)    ! grep -qsE '"toolPermission": *"always-proceed"' "$HOME/.gemini/antigravity-cli/settings.json" ;;
-  esac
-}
-in_use() {  # processi reali dello strumento (eseguibile nativo o script avviato da node), di qualunque utente
-  local re
-  case $1 in
-    claude) re='claude|claude-code' ;; codex) re='codex' ;; agy) re='agy|antigravity' ;;
-  esac
-  "$MAINT" procs | grep -qiE "($re)"
-}
-
 update_npm() {  # $1 = comando, $2 = pacchetto npm, $3 = dist-tag di riferimento
-  local cur target
+  local cur target m=""
   cur=$(npm ls -g --depth=0 --json "$2" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["dependencies"][sys.argv[1]]["version"])' "$2" 2>/dev/null)
   target=$(npm view "$2@$3" version 2>/dev/null)
-  [ -n "$cur" ] && [ -n "$target" ] || { log "$1: versione non determinabile (installata '$cur', $3 '$target')"; return 1; }
+  [ -n "$cur" ] && [ -n "$target" ] || { log "$1: ERRORE, versione non determinabile (installata '$cur', $3 '$target')"; return 1; }
   newer "$cur" "$target" || { log "$1: $cur aggiornato ($3 = $target)"; return 0; }
   in_use "$1" && { log "$1: $cur -> $target rinviato, programma in uso"; return 0; }
   [ "$DRY" = 1 ] && { log "$1: DRY_RUN, aggiornerei $cur -> $target"; return 0; }
   log "$1: aggiorno $cur -> $target"
-  if npm install -g --no-fund --no-audit "$2@$target" >> "$WORK/npm.log" 2>&1 && perms_ok "$1" && smoke "$1"; then
-    log "$1: $target verificato (AGENTS.md caricato, permessi invariati)"
+  # dopo l'aggiornamento: ambiente e sandbox sempre; AGENTS.md solo se il login c'è (gli altri non si autenticano)
+  if npm install -g --no-fund --no-audit "$2@$target" >> "$WORK/npm.log" 2>&1 && m=$(ambiente "$1") \
+     && { ! auth_ok "$1" || smoke "$1"; }; then
+    log "$1: $target verificato (ambiente e sandbox conformi$(auth_ok "$1" && echo ', AGENTS.md caricato'))"
   else
-    log "$1: VERIFICA FALLITA su $target, ripristino $cur (dettagli in $WORK)"
+    log "$1: VERIFICA FALLITA su $target${m:+ ($m)}, ripristino $cur (dettagli in $WORK)"
     npm install -g --no-fund --no-audit "$2@$cur" >> "$WORK/npm.log" 2>&1 && log "$1: ripristinato $cur" \
       || log "$1: ERRORE, ripristino di $cur fallito"
     return 1
   fi
 }
 
-update_agy() {
-  local bin="$HOME/.local/bin/agy" cur new
-  cur=$("$bin" --version 2>/dev/null | head -1)
-  in_use agy && { log "agy: aggiornamento rinviato, programma in uso"; return 0; }
-  [ "$DRY" = 1 ] && { log "agy: DRY_RUN, eseguirei 'agy update' (installata $cur)"; return 0; }
-  cp -p "$bin" "$WORK/agy.prev"
-  "$bin" update >> "$WORK/agy-update.log" 2>&1
-  new=$("$bin" --version 2>/dev/null | head -1)
-  if [ "$new" = "$cur" ]; then log "agy: $cur aggiornato"; rm -f "$WORK/agy.prev"; return 0; fi
-  if perms_ok agy && smoke agy; then
-    log "agy: $cur -> $new verificato (AGENTS.md caricato, permessi invariati)"; rm -f "$WORK/agy.prev"
-  else
-    log "agy: VERIFICA FALLITA su $new, ripristino $cur"
-    cp -p "$WORK/agy.prev" "$bin.new" && mv "$bin.new" "$bin" && log "agy: ripristinato $cur"
-    return 1
-  fi
+# ------------------------------------------------------------------ comandi
+sel() {  # $1 nome facoltativo → elenco
+  [ -z "${1:-}" ] && { echo "$TUTTI"; return; }
+  case $1 in claude|codex|agy|gemini) echo "$1" ;; *) echo "agente non valido: $1 (claude codex agy gemini)" >&2; exit 2 ;; esac
 }
-
 rc=0
-if [ "${1:-}" = "--verify" ]; then
-  n=0
-  for t in claude codex agy; do
-    installed "$t" || continue
-    n=$((n + 1))
-    if perms_ok "$t" && smoke "$t"; then log "$t: verifica OK (AGENTS.md caricato, permessi conformi)"
-    else log "$t: VERIFICA FALLITA (dettagli in $WORK/smoke-$t.txt)"; rc=1; fi
-  done
-  [ "$n" -gt 0 ] || { log "nessun CLI installato"; rc=1; }
-  exit $rc
-fi
+case "${1:-}" in
+  --ambiente)
+    for a in $(sel "${2:-}"); do
+      if m=$(ambiente "$a"); then log "$a: ambiente OK ($(etichetta "$a") $(version_of "$a"))"
+      else log "$a: AMBIENTE NON CONFORME: $m"; rc=1; fi
+    done
+    exit $rc ;;
+  --stato)
+    sess=$(agente_sessione 2>/dev/null) || sess=""
+    for a in $TUTTI; do
+      st_i=no; st_a=-; st_l=-
+      if installed "$a"; then st_i=$(version_of "$a"); if m=$(ambiente "$a"); then st_a=conforme; else st_a="NON CONFORME: $m"; fi
+        if auth_ok "$a"; then st_l=fatto; else st_l="da fare"; fi; fi
+      printf '%s|%s|%s|%s|%s|%s\n' "$a" "$(etichetta "$a")" "${st_i:-?}" "$st_a" "$st_l" "$([ "$a" = "$sess" ] && echo sessione)"
+    done
+    exit 0 ;;
+  --verify)
+    if [ -n "${2:-}" ]; then att=$(sel "$2"); else att=$(agente_sessione) || { log "$att"; exit 1; }; fi
+    for a in $TUTTI; do
+      [ "$a" = "$att" ] && continue
+      if m=$(ambiente "$a"); then log "$a: ambiente OK"; else log "$a: ATTENZIONE, AMBIENTE NON CONFORME (non blocca $(etichetta "$att")): $m"; fi
+      auth_ok "$a" || log "$a: login non fatto (agente non in uso: nessun problema)"
+    done
+    if ! m=$(ambiente "$att"); then log "$att: VERIFICA FALLITA, ambiente non conforme: $m"; exit 1; fi
+    if ! auth_ok "$att"; then log "$att: NON AUTENTICATO: completare il login con $(login_hint "$att")"; exit 1; fi
+    if ! smoke "$att"; then log "$att: VERIFICA FALLITA: AGENTS.md non caricato o uscita diversa da 0 (login scaduto, abbonamento o quota? dettagli in $WORK/smoke-$att.txt)"; exit 1; fi
+    isolamento "$att" || exit 1
+    log "$att: verifica OK (agente della sessione: $(etichetta "$att"); AGENTS.md caricato, permessi e sandbox conformi)"
+    exit 0 ;;
+  "") ;;
+  *) sed -n '2,15p' "$0"; exit 2 ;;
+esac
 take_lock
-installed claude && { update_npm claude @anthropic-ai/claude-code stable || rc=1; }   # canale stable (circa una settimana di ritardo)
-installed codex  && { update_npm codex  @openai/codex latest || rc=1; }               # Codex pubblica le release stabili su latest
-installed agy    && { update_agy || rc=1; }
+for a in claude codex gemini; do   # Antigravity: ops-agy-update.timer (root)
+  installed "$a" || { log "$a: ERRORE, non installato"; rc=1; continue; }
+  case $a in
+    claude) update_npm claude @anthropic-ai/claude-code stable || rc=1 ;;   # canale stable (circa una settimana di ritardo)
+    codex)  update_npm codex @openai/codex latest || rc=1 ;;                # Codex pubblica le release stabili su latest
+    gemini) update_npm gemini @google/gemini-cli latest || rc=1 ;;
+  esac
+done
 exit $rc

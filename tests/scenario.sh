@@ -288,9 +288,12 @@ t "host.conf ripristinato, repository pulito" bash -c "[ -z \"\$(runuser -u test
 # comando unico ops-installa, passo 5, rilevazione, esclusioni e regressioni della consegna 0.4.0 (T17–T23)
 . "$PKG/tests/installa-scenario.sh"
 
+# agenti di amministrazione 0.7.0: quattro installati, agente della sessione, sandbox, comando agente (A1–A28)
+. "$PKG/tests/agenti-scenario.sh"
+
 echo "== T11 analisi statica (shellcheck -S warning)"
 apt-get install -y -qq shellcheck >/dev/null 2>&1
-for f in "$PKG/bootstrap.sh" "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/install-maint" "$PKG"/payload/ops/docs/bootstrap/*.sh "$PKG/payload/ops/docs/bootstrap/ops-installa"; do
+for f in "$PKG/bootstrap.sh" "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/ops-agy" "$PKG/payload/ops/maint/install-maint" "$PKG"/payload/ops/docs/bootstrap/*.sh "$PKG/payload/ops/docs/bootstrap/ops-installa"; do
   if shellcheck -S warning -x -P SCRIPTDIR "$f" > /tmp/sc.txt 2>&1; then pass "shellcheck ${f#$PKG/}"; else bad "shellcheck ${f#$PKG/}"; sed 's/^/   | /' /tmp/sc.txt | head -30; fi
 done
 

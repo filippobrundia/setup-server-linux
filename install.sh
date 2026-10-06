@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # install.sh — punto di ingresso pubblico di setup-server-linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.6.0/install.sh \
+#   curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.7.0/install.sh \
 #     | bash -s -- --sha256 <IMPRONTA DALLA PAGINA DELLA RELEASE> [--check] [--owner "Nome"] [--knowledge-base-only]
 #                  [--no-kb | --kb-url https://host/percorso]   (Knowledge Base facoltativa: senza opzioni la domanda arriva durante l'avvio)
+#                  [--agente claude|codex|agy|gemini]          (agente della sessione: senza opzione la domanda arriva alla fine)
 #
-# Da eseguire come utente amministratore NORMALE (nel gruppo sudo), mai come root: Claude Code e il suo login
+# Da eseguire come utente amministratore NORMALE (nel gruppo sudo), mai come root: gli agenti e i loro login
 # restano in questo account. Scarica la release v$VERSION, ne verifica l'integrità (SHA256SUMS della release e,
 # con --sha256, l'impronta pubblicata), la estrae in ~/setup-server-linux-$VERSION e avvia
 # "sudo bootstrap.sh --admin <questo utente>" (sudo chiede la password). --check: solo controllo, nessuna modifica.
 set -euo pipefail
 REPO=filippobrundia/setup-server-linux
-VERSION=0.6.0
+VERSION=0.7.0
 NAME=setup-server-linux-$VERSION
 BASE=https://github.com/$REPO/releases/download/v$VERSION
 
@@ -25,11 +26,12 @@ while [ $# -gt 0 ]; do
     --knowledge-base-only) ARGS+=(--knowledge-base-only); shift ;;
     --no-kb)  ARGS+=(--no-kb); shift ;;
     --kb-url) ARGS+=(--kb-url "${2:-}"); shift 2 ;;
+    --agente) ARGS+=(--agente "${2:-}"); shift 2 ;;
     *) die "opzione sconosciuta: $1" ;;
   esac
 done
 
-[ "$(id -u)" != 0 ] || die "eseguire come utente amministratore normale, non come root (Claude va installato nel suo account)"
+[ "$(id -u)" != 0 ] || die "eseguire come utente amministratore normale, non come root (gli agenti vanno installati nel suo account)"
 ME=$(id -un)
 g=" $(id -nG) "; [[ "$g" == *" sudo "* ]] || die "$ME non è nel gruppo sudo"
 for c in curl sha256sum tar sudo; do command -v "$c" >/dev/null || die "manca il comando $c"; done

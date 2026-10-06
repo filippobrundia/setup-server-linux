@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# ops-agy — Antigravity CLI (agente Google) in un percorso di root, componente della manutenzione (ops-maint).
+# Copia eseguita: /usr/local/sbin/ops-agy (root:root 0755). Avviato da bootstrap.sh (install) e da ops-agy-update.timer.
+#
+#   sudo ops-agy install      installa il binario ufficiale (manifest della release, SHA-512) e, se serve, il profilo AppArmor
+#   sudo ops-agy update       nuova versione solo se agy non è in uso; la precedente resta per il ripristino
+#   sudo ops-agy rollback     torna alla versione precedente conservata
+#   ops-agy verify            sola lettura (anche senza sudo): proprietà, permessi, profilo, versione
+#   ops-agy profilo agy|bwrap stampa il profilo AppArmor mirato (agy; bwrap per Claude Code e Codex dove Ubuntu non lo ha)
+#
+# Perché in /opt e di root: la sandbox di agy usa i namespace del kernel, che Ubuntu (24.04 e successive,
+# kernel.apparmor_restrict_unprivileged_userns=1) concede solo ai programmi con un profilo AppArmor. Il profilo
+# "ops-agy" vale SOLO per $BIN, che l'amministratore non può modificare senza sudo (cartelle e file root, nessuna
+# scrittura per gruppo o altri). Stesso schema dei profili di Ubuntu per podman e per bwrap. Nessuna restrizione globale
+# viene disattivata. Aggiornamenti solo da qui (root): l'autoaggiornamento di agy non può scrivere in $DIR.
+# Il passo "agy install" dell'installatore ufficiale (PATH e profili della shell) non viene mai eseguito.
+set -euo pipefail
+export LC_ALL=C.UTF-8 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+DIR=/opt/ops-agenti/antigravity
+BIN=$DIR/agy
+PREV=$DIR/agy.prev
+PROFILE=/etc/apparmor.d/ops-agy
+LOG=/var/log/ops-agy.log
+LOCK=${MAINT_LOCK:-/run/lock/ops-maint.lock}
+# manifest letto dall'installatore ufficiale https://antigravity.google/cli/install.sh (2026-10-06)
+MANIFEST_BASE=${AGY_MANIFEST_BASE:-https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests}
+URL_RE='^https://storage\.googleapis\.com/antigravity-public/'
+
+say() { local m; m="$(date -u '+%F %T') ops-agy: $*"; echo "$m"; [ "$(id -u)" != 0 ] || echo "$m" >> "$LOG"; }
+die() { say "ERRORE: $*" >&2; exit 1; }
+need_root() { [ "$(id -u)" = 0 ] || die "va eseguito con sudo"; }
+
+# AppArmor: il profilo serve solo se la restrizione dei namespace è attiva e AppArmor è caricato nel kernel
+restriction_active() {
+  [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = 1 ] \
+    && [ -d /sys/kernel/security/apparmor ] && command -v apparmor_parser >/dev/null
+}
+profile_text() {
+  if [ "${1:-agy}" = bwrap ]; then
+    cat <<'EOF'
+# ops-bwrap — gestito da setup-server-linux: namespace SOLO per /usr/bin/bwrap (sandbox di Claude Code e Codex).
+# Profilo indicato dalla documentazione di Claude Code per Ubuntu 24.04; Ubuntu 25.04+ ne ha uno proprio (non installato lì).
+abi <abi/4.0>,
+include <tunables/global>
+
+profile ops-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+
+  include if exists <local/ops-bwrap>
+}
+EOF
+    return
+  fi
+  cat <<EOF
+# ops-agy — gestito da setup-server-linux (ops-maint): namespace del kernel SOLO per $BIN (sandbox di Antigravity).
+# Il binario è di root e non modificabile dall'amministratore. Modifiche locali: /etc/apparmor.d/local/ops-agy
+abi <abi/4.0>,
+include <tunables/global>
+
+profile ops-agy $BIN flags=(unconfined) {
+  userns,
+
+  include if exists <local/ops-agy>
+}
+EOF
+}
+install_profile() {
+  if ! restriction_active; then say "AppArmor: restrizione dei namespace non attiva qui, profilo non necessario"; return 0; fi
+  local tmp; tmp=$(mktemp)
+  profile_text > "$tmp"
+  if [ -e "$PROFILE" ] && cmp -s "$tmp" "$PROFILE"; then rm -f "$tmp"
+  else
+    if [ -e "$PROFILE" ]; then head -n 1 "$PROFILE" | grep -q '^# ops-agy' || { rm -f "$tmp"; die "$PROFILE esiste e non è del pacchetto"; }; fi
+    apparmor_parser -Q -K "$tmp" >/dev/null 2>&1 || { rm -f "$tmp"; die "profilo AppArmor non valido (apparmor_parser)"; }
+    install -o root -g root -m 0644 "$tmp" "$PROFILE"; rm -f "$tmp"; say "profilo AppArmor installato: $PROFILE"
+  fi
+  apparmor_parser -r -W "$PROFILE" || die "caricamento del profilo $PROFILE non riuscito"
+  say "profilo AppArmor ops-agy caricato (solo $BIN)"
+}
+profile_loaded() { grep -q '^ops-agy (unconfined)' /sys/kernel/security/apparmor/profiles 2>/dev/null; }
+
+fetch_manifest() {  # stampa "versione url sha512" validati
+  local plat man url sum ver
+  case $(dpkg --print-architecture) in amd64) plat=linux_amd64 ;; arm64) plat=linux_arm64 ;; *) die "architettura non supportata" ;; esac
+  man=$(curl -fsSL --proto '=https' -m 60 "$MANIFEST_BASE/$plat.json") || die "manifest non scaricabile ($MANIFEST_BASE)"
+  url=$(jq -r '.url // empty' <<<"$man"); sum=$(jq -r '.sha512 // empty' <<<"$man"); ver=$(jq -r '.version // empty' <<<"$man")
+  [[ "$url" =~ $URL_RE ]] && [[ "$sum" =~ ^[0-9a-f]{128}$ ]] && [[ "$ver" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "manifest inatteso"
+  echo "$ver $url $sum"
+}
+download() {  # $1 url, $2 sha512, $3 destinazione del binario estratto
+  local tmp; tmp=$(mktemp -d)
+  curl -fsSL --proto '=https' -m 900 -o "$tmp/pkg" "$1" || { rm -rf "$tmp"; die "download non riuscito"; }
+  [ "$(sha512sum "$tmp/pkg" | cut -d' ' -f1)" = "$2" ] || { rm -rf "$tmp"; die "SHA-512 diverso dal manifest: nessuna modifica"; }
+  if [[ "$1" == *.tar.gz* ]]; then tar -xzf "$tmp/pkg" -C "$tmp" antigravity || { rm -rf "$tmp"; die "archivio senza l'eseguibile atteso"; }; mv "$tmp/antigravity" "$3"
+  else mv "$tmp/pkg" "$3"; fi
+  rm -rf "$tmp"; chown root:root "$3"; chmod 0755 "$3"
+}
+version_of() {  # come utente senza privilegi (anche il binario appena scaricato)
+  if [ "$(id -u)" = 0 ]; then runuser -u nobody -- env -i HOME=/tmp AGY_CLI_DISABLE_AUTO_UPDATE=true timeout 30 "$1" --version 2>/dev/null | head -n 1
+  else AGY_CLI_DISABLE_AUTO_UPDATE=true timeout 30 "$1" --version 2>/dev/null | head -n 1; fi
+}
+in_use() { pgrep -f "^$BIN( |$)" >/dev/null 2>&1; }
+newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$2" ]; }
+
+secure_dirs() {
+  install -d -o root -g root -m 0755 /opt/ops-agenti "$DIR"
+}
+cmd_install() {
+  need_root; secure_dirs
+  if [ -x "$BIN" ]; then say "già installato: $(version_of "$BIN")"
+  else
+    read -r ver url sum < <(fetch_manifest)
+    download "$url" "$sum" "$DIR/agy.new"
+    [ -n "$(version_of "$DIR/agy.new")" ] || { rm -f "$DIR/agy.new"; die "il binario scaricato non si avvia"; }
+    mv -f "$DIR/agy.new" "$BIN"; say "installato $ver in $BIN (SHA-512 verificato)"
+  fi
+  install_profile
+  cmd_verify
+}
+cmd_update() {
+  need_root
+  [ -x "$BIN" ] || die "non installato: ops-agy install"
+  { exec 9<"$LOCK"; } 2>/dev/null || { say "RINVIO: blocco $LOCK assente"; exit 0; }
+  flock -w 30 9 || { say "RINVIO: manutenzione o altro aggiornamento in corso"; exit 0; }
+  local cur ver url sum
+  cur=$(version_of "$BIN"); read -r ver url sum < <(fetch_manifest)
+  newer "${cur:-0}" "$ver" || { say "$cur aggiornato (ultima $ver)"; exit 0; }
+  in_use && { say "$cur -> $ver rinviato, programma in uso"; exit 0; }
+  [ "${DRY_RUN:-0}" = 1 ] && { say "DRY_RUN, aggiornerei $cur -> $ver"; exit 0; }
+  download "$url" "$sum" "$DIR/agy.new"
+  [ -n "$(version_of "$DIR/agy.new")" ] || { rm -f "$DIR/agy.new"; die "la versione $ver non si avvia: resta $cur"; }
+  cp -p "$BIN" "$PREV"; mv -f "$DIR/agy.new" "$BIN"
+  say "aggiornato $cur -> $ver (precedente conservata in $PREV; ripristino: sudo ops-agy rollback)"
+  install_profile >/dev/null   # stesso percorso: il profilo resta valido; ricaricato per sicurezza
+}
+cmd_rollback() {
+  need_root
+  [ -x "$PREV" ] || die "nessuna versione precedente conservata"
+  local cur; cur=$(version_of "$BIN")
+  cp -p "$PREV" "$DIR/agy.new" && mv -f "$DIR/agy.new" "$BIN"
+  say "ripristinata $(version_of "$BIN") (era $cur)"
+}
+cmd_verify() {
+  local bad=0 v o
+  [ -x "$BIN" ] || { echo "KO  $BIN assente"; exit 1; }
+  for p in /opt/ops-agenti "$DIR" "$BIN"; do
+    o=$(stat -c '%U:%G %a' "$p")
+    case $o in root:root\ 755) ;; *) echo "KO  $p: $o (atteso root:root 755: l'amministratore non deve poterlo modificare)"; bad=1 ;; esac
+  done
+  v=$(version_of "$BIN"); [ -n "$v" ] && echo "ok  versione $v" || { echo "KO  $BIN non si avvia"; bad=1; }
+  if restriction_active; then
+    [ -f "$PROFILE" ] && echo "ok  profilo $PROFILE presente" || { echo "KO  profilo $PROFILE assente (restrizione dei namespace attiva)"; bad=1; }
+    if [ "$(id -u)" = 0 ] && [ -d /sys/kernel/security/apparmor ]; then
+      profile_loaded && echo "ok  profilo ops-agy caricato nel kernel" || { echo "KO  profilo ops-agy non caricato"; bad=1; }
+    fi
+  else echo "ok  restrizione dei namespace non attiva: profilo non necessario"; fi
+  return $bad
+}
+
+case ${1:-} in
+  install) cmd_install ;;
+  update) cmd_update ;;
+  rollback) cmd_rollback ;;
+  verify) cmd_verify ;;
+  profilo) case ${2:-agy} in agy|bwrap) profile_text "${2:-agy}" ;; *) exit 2 ;; esac ;;
+  *) sed -n '2,10p' "$0"; exit 2 ;;
+esac

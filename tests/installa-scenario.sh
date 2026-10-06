@@ -181,7 +181,7 @@ echo boot-1 > $IT/boot_id
 printf 'APPROVED=no\n' > $IT/var/lib/ops-maint/inbox/window.conf; chown tester:tester $IT/var/lib/ops-maint/inbox/window.conf
 chown root:tester $IT/var/lib/ops-maint/inbox; chmod 2770 $IT/var/lib/ops-maint/inbox
 HC=$IT/srv/ops/host.conf
-sed -i 's|^LAN_CIDR=.*|LAN_CIDR="10.0.0.0/24"|; s|^DATA_MOUNT=.*|DATA_MOUNT="/tmp/it-dati"|; s|^SERVICES=.*|SERVICES="ssh cron ufw fail2ban"|; s|^PROFILO=.*|PROFILO="base"|; s|^ESCLUSIONI=.*|ESCLUSIONI="2 7.1 11.2"|; s|^OFFSITE=.*|OFFSITE="remoto:prova"|' $HC
+sed -i 's|^LAN_CIDR=.*|LAN_CIDR="10.0.0.0/24"|; s|^DATA_MOUNT=.*|DATA_MOUNT="/tmp/it-dati"|; s|^SERVICES=.*|SERVICES="ssh cron ufw fail2ban"|; s|^PROFILO=.*|PROFILO="base"|; s|^ESCLUSIONI=.*|ESCLUSIONI="2 7.1 11.2"|; s|^OFFSITE=.*|OFFSITE="remoto:prova"|; s|^AGENTE=.*|AGENTE="agy"|' $HC
 runuser -u tester -- git -C $IT/srv/ops commit -qam "prova: parametri" >/dev/null
 reref() {  # impronte di riferimento della radice di prova = file attuali (come dopo bootstrap.sh)
   install -d -m 0700 $IT/var/lib/ops-bootstrap
@@ -330,7 +330,7 @@ chown -R tester:tester $IT/srv/ops
 printf '#!/bin/bash\ncase "$*" in\n  "is-enabled --quiet "*) exit 0 ;;\n  "is-enabled "*) echo disabled ;;\n  reboot) echo "systemctl reboot" >> "$OPS_INSTALLA_TEST_ROOT/calls" ;;\n  *) exit 0 ;;\nesac\n' > $IT/fakebin/systemctl
 chmod +x $IT/fakebin/systemctl; echo boot-1 > $IT/boot_id
 HC=$IT/srv/ops/host.conf
-sed -i 's|^LAN_CIDR=.*|LAN_CIDR="10.0.0.0/24"|; s|^DATA_MOUNT=.*|DATA_MOUNT="/tmp/it-dati"|; s|^SERVICES=.*|SERVICES="ssh cron ufw fail2ban"|; s|^PROFILO=.*|PROFILO="base"|; s|^ESCLUSIONI=.*|ESCLUSIONI="2 7.1 10.3 11.2 12.8"|' $HC
+sed -i 's|^LAN_CIDR=.*|LAN_CIDR="10.0.0.0/24"|; s|^DATA_MOUNT=.*|DATA_MOUNT="/tmp/it-dati"|; s|^SERVICES=.*|SERVICES="ssh cron ufw fail2ban"|; s|^PROFILO=.*|PROFILO="base"|; s|^ESCLUSIONI=.*|ESCLUSIONI="2 7.1 10.3 11.2 12.8"|; s|^AGENTE=.*|AGENTE="agy"|' $HC
 cp -p /etc/ops-maint.conf /tmp/ops-maint.conf.d1
 p9() { runuser -u tester -- cp "$1" $IT/srv/ops/docs/bootstrap/passo9-manutenzione.sh; runuser -u tester -- git -C $IT/srv/ops commit -qam "prova: passo9" >/dev/null 2>&1 || true; reref; }
 state0() { rm -rf $IT/var/lib/ops-bootstrap/installa.state $IT/var/log/ops-installa $IT/calls; install -d -m 0700 $IT/var/lib/ops-bootstrap

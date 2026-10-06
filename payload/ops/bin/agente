@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# agente — sceglie l'agente della sessione, guida il login personale SOLO di quello, lo collauda e lo avvia in /srv/ops.
+# Utente amministratore, senza sudo. Funzione di shell: agente (da ~/.bash_aliases).
+#   agente               chiede "Con quale agente vuoi avviare la sessione?" (Invio = quello attuale), poi login se
+#                        manca, collaudo operativo (cli-update --verify) e avvio; se l'agente non è utilizzabile
+#                        (login, abbonamento, quota) propone di sceglierne un altro
+#   agente NOME          come sopra senza domanda: claude | codex | antigravity (agy) | gemini
+#   agente --stato       i quattro agenti: installazione, ambiente e sandbox, login (nessuna modifica)
+#   agente --scegli NOME registra soltanto la scelta (host.conf, commit), senza login né avvio
+# Cambiare agente non reinstalla nulla e non tocca l'avanzamento: tutti leggono lo stesso stato (/srv/ops, AGENTS.md,
+# Knowledge Base); le conversazioni restano separate, ciascuna nello strumento che l'ha creata.
+# Nessun servizio a pagamento viene attivato: il login usa l'account o la chiave che il proprietario sceglie.
+set -u
+export PATH="$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
+export AGY_CLI_DISABLE_AUTO_UPDATE=true
+OPS=${OPS_DIR:-/srv/ops}
+HOSTCONF=${OPS_HOSTCONF:-$OPS/host.conf}
+CLI_UPDATE=${OPS_CLI_UPDATE:-$OPS/bin/cli-update}
+AGY=${OPS_AGY_BIN:-/opt/ops-agenti/antigravity/agy}
+TTY_IN=${AGENTE_TTY:-/dev/tty}
+
+say() { printf '%s\n' "$*"; }
+etichetta() { case $1 in claude) echo "Claude Code" ;; codex) echo "Codex CLI" ;; agy) echo "Antigravity CLI" ;; gemini) echo "Gemini CLI" ;; esac; }
+nome_agente() {
+  local r; r=$(echo "${1,,}" | xargs 2>/dev/null)
+  case $r in
+    claude|"claude code") echo claude ;; codex|"codex cli") echo codex ;;
+    agy|antigravity|"antigravity cli") echo agy ;; gemini|"gemini cli") echo gemini ;;
+  esac
+}
+attuale() { awk -F= '$1 == "AGENTE" {v = substr($0, index($0, "=") + 1); sub(/[ \t]+#.*$/, "", v); gsub(/"/, "", v); print v}' "$HOSTCONF" 2>/dev/null | tail -n 1; }
+ask() {  # input finito (terminale chiuso): esce, mai un ciclo senza fine
+  local r; printf '%s' "$1" >&2
+  IFS= read -r r <&3 || { printf '\n' >&2; say "agente: nessuna risposta (input terminato)" >&2; exit 2; }
+  printf '%s' "$r"
+}
+
+stato() {
+  say "Agenti installati (stesso stato del server per tutti; conversazioni separate):"
+  "$CLI_UPDATE" --stato | while IFS='|' read -r _ e v amb login sess; do
+    printf '  %-16s %-14s ambiente: %-12s login: %-8s %s\n' "$e" "${v:0:14}" "${amb%%:*}" "$login" "$([ -n "$sess" ] && echo '← sessione')"
+    [[ "$amb" == "NON CONFORME"* ]] && printf '  %-16s %s\n' "" "${amb#NON CONFORME: }"
+  done
+}
+registra() {  # $1 agente: unica riga AGENTE in host.conf, commit del solo host.conf
+  local a=$1
+  [ "$(attuale)" = "$a" ] && return 0
+  [ "$(grep -cE '^AGENTE=' "$HOSTCONF")" -le 1 ] || { say "AGENTE dichiarato più volte in $HOSTCONF: lasciarne una sola riga"; return 1; }
+  if grep -qE '^AGENTE=' "$HOSTCONF"; then sed -i -E "s/^AGENTE=(\"[^\"]*\"|[^[:space:]]*)/AGENTE=\"$a\"/" "$HOSTCONF"
+  else printf '%s\n' "AGENTE=\"$a\"            # agente della sessione (claude codex agy gemini): si cambia con il comando agente" >> "$HOSTCONF"; fi
+  [ "$(attuale)" = "$a" ] || { say "host.conf non aggiornato"; return 1; }
+  git -C "$OPS" commit -q -m "agente della sessione: $(etichetta "$a")" -- "$HOSTCONF" >/dev/null 2>&1 || true
+  say "Agente della sessione: $(etichetta "$a") (registrato in host.conf)"
+}
+login() {  # guida il login personale del solo agente scelto (credenziali: intervento del proprietario)
+  local a=$1 k
+  case $a in
+    claude)
+      say "Login di Claude Code (abbonamento Claude): si apre un URL; aprirlo nel browser del PC, accedere e incollare qui il codice."
+      (cd "$OPS" && claude auth login) ;;
+    codex)
+      say "Login di Codex (account ChatGPT): aprire nel browser del PC l'URL indicato e inserire il codice mostrato."
+      (cd "$OPS" && codex login --device-auth) ;;
+    agy)
+      say "Login di Antigravity (account Google personale, piano gratuito): agy mostra un URL di autorizzazione."
+      say "  1. aprire l'URL nel browser del PC e accedere con l'account Google;"
+      say "  2. copiare il codice mostrato dal browser e incollarlo qui;"
+      say "  3. a login completato uscire da agy (/quit o Ctrl-D): il collaudo riparte da solo."
+      (cd "$OPS" && "$AGY") ;;
+    gemini)
+      say "Gemini CLI usa una chiave API di Google AI Studio (https://aistudio.google.com/apikey) creata nel browser del PC."
+      say "Piano gratuito: nessuna fatturazione da attivare; Google può usare i contenuti inviati per migliorare i prodotti."
+      printf 'Incolla la chiave (input nascosto, Invio vuoto = annulla): ' >&2
+      IFS= read -rs k <&3; echo >&2
+      [ -n "$k" ] || return 1
+      [[ "$k" =~ ^[A-Za-z0-9_-]{20,100}$ ]] || { say "formato della chiave non riconosciuto: nulla salvato"; return 1; }
+      install -d -m 0700 "$HOME/.gemini"
+      ( umask 077; printf 'GEMINI_API_KEY=%s\n' "$k" > "$HOME/.gemini/.env.nuovo" ) && mv -f "$HOME/.gemini/.env.nuovo" "$HOME/.gemini/.env"
+      unset k; say "chiave salvata in ~/.gemini/.env (0600, fuori da /srv/ops e dai backup del repository)" ;;
+  esac
+}
+autenticato() { "$CLI_UPDATE" --stato | awk -F'|' -v a="$1" '$1 == a {exit ($5 == "fatto" ? 0 : 1)}'; }
+avvia() {  # $1 agente: avvio interattivo in /srv/ops (stessa funzione della shell)
+  say "Avvio di $(etichetta "$1") in $OPS. Prompt iniziale suggerito: \"Leggi AGENTS.md e procedi\" (configurazione iniziale o gestione ordinaria)."
+  cd "$OPS" || exit 1
+  case $1 in agy) exec "$AGY" ;; *) exec "$1" ;; esac
+}
+
+case ${1:-} in
+  --stato) stato; exit 0 ;;
+  --scegli) a=$(nome_agente "${2:-}"); [ -n "$a" ] || { say "agente: claude, codex, antigravity o gemini"; exit 2; }; registra "$a"; exit $? ;;
+  -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+esac
+{ exec 3<"$TTY_IN"; } 2>/dev/null || { say "agente: serve un terminale (sessione SSH dell'amministratore)"; exit 2; }   # aperto una volta
+scelta=""; [ -n "${1:-}" ] && { scelta=$(nome_agente "$1"); [ -n "$scelta" ] || { say "agente sconosciuto: $1 (claude, codex, antigravity, gemini)"; exit 2; }; }
+while :; do
+  if [ -z "$scelta" ]; then
+    stato; cur=$(attuale)
+    r=$(ask "Con quale agente vuoi avviare la sessione? Claude Code / Codex CLI / Antigravity CLI / Gemini CLI${cur:+ [Invio = $(etichetta "$cur")]}: ") || exit 2
+    [ -z "$r" ] && [ -n "$cur" ] && r=$cur
+    scelta=$(nome_agente "$r"); [ -n "$scelta" ] || { say "risposta non riconosciuta"; continue; }
+  fi
+  if ! "$CLI_UPDATE" --ambiente "$scelta" >/dev/null 2>&1; then
+    say "$(etichetta "$scelta"): ambiente o sandbox non conformi:"; "$CLI_UPDATE" --ambiente "$scelta" | sed 's/^[0-9-]* [0-9:]* cli-update: /  /'
+    say "Non si avvia senza sandbox. Scegliere un altro agente (o correggere e rilanciare agente)."; scelta=""; continue
+  fi
+  if ! autenticato "$scelta"; then login "$scelta" || true; fi
+  say "Collaudo operativo di $(etichetta "$scelta") (AGENTS.md, sandbox; una o due richieste al modello)…"
+  if "$CLI_UPDATE" --verify "$scelta" | sed 's/^[0-9-]* [0-9:]* cli-update: /  /' && [ "${PIPESTATUS[0]}" = 0 ]; then
+    registra "$scelta" || exit 1
+    avvia "$scelta"
+  fi
+  say "$(etichetta "$scelta") non è utilizzabile ora (login, abbonamento o quota: dettagli sopra)."
+  r=$(ask "Riprovare il login (L), scegliere un altro agente (A) o uscire (Invio)? ") || exit 2
+  case ${r,,} in l) login "$scelta" || true ;; a) scelta="" ;; *) exit 1 ;; esac
+done

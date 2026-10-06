@@ -1,0 +1,12 @@
+# ops: configurazione di Codex per l'amministrazione di /srv/ops (creata da setup-server-linux; si può modificare,
+# ma cli-update e bootstrap.sh rifiutano l'accesso completo senza sandbox e l'assenza di approvazioni).
+# Sandbox e approvazioni restano attive: i comandi ordinari che la sandbox non permette (systemd, rete della KB,
+# scritture in .git e nella home) sono consentiti uno per uno in ~/.codex/rules/ops.rules.
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+
+[sandbox_workspace_write]
+network_access = false
+
+[projects."/srv/ops"]
+trust_level = "trusted"

@@ -1,4 +1,26 @@
 {
   "env": { "DISABLE_AUTOUPDATER": "1" },
-  "autoUpdatesChannel": "stable"
+  "autoUpdatesChannel": "stable",
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "excludedCommands": [
+      "/srv/ops/bin/quick-check", "/srv/ops/bin/quick-check *",
+      "/srv/ops/bin/kb sync *", "/srv/ops/bin/kb sync", "/srv/ops/bin/kb status", "/srv/ops/bin/kb index",
+      "/srv/ops/bin/cli-update --verify", "/srv/ops/bin/cli-update --verify *",
+      "systemctl status *", "systemctl is-active *", "systemctl is-enabled *", "systemctl list-units *", "systemctl list-timers *",
+      "journalctl *", "git add *", "git commit *"
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(/srv/ops/bin/quick-check)", "Bash(/srv/ops/bin/quick-check *)",
+      "Bash(/srv/ops/bin/kb sync)", "Bash(/srv/ops/bin/kb sync *)", "Bash(/srv/ops/bin/kb status)", "Bash(/srv/ops/bin/kb index)",
+      "Bash(/srv/ops/bin/cli-update --verify)", "Bash(/srv/ops/bin/cli-update --verify *)",
+      "Bash(systemctl status *)", "Bash(systemctl is-active *)", "Bash(systemctl is-enabled *)", "Bash(systemctl list-units *)", "Bash(systemctl list-timers *)",
+      "Bash(journalctl *)", "Bash(git add *)", "Bash(git commit *)"
+    ],
+    "deny": ["Bash(sudo *)", "Bash(sudo)"]
+  }
 }

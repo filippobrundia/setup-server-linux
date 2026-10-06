@@ -3,7 +3,9 @@
 # Strumento della foundation: NON viene aggiornato dalla sincronizzazione e non esegue mai script della KB.
 #
 #   kb init                  primo recupero (clone) in $KB_DIR, hook anti-modifica, indice
-#   kb sync [--quiet]        recupera i nuovi record; non tocca il lavoro locale; senza rete usa la copia locale
+#   kb sync [--quiet]        recupera i nuovi record; non tocca il lavoro locale; senza rete usa la copia locale.
+#                            Esce con 0 anche quando usa la copia locale: il successo è solo la riga "sincronizzata:"
+#                            (o "ultima sincronizzazione riuscita" di kb status)
 #   kb status                ultima sincronizzazione, record locali non pubblicati, stato della copia
 #   kb new "Titolo"          crea records/RECORD-<data>-<server>-<casuale>/RECORD.md da completare
 #   kb validate RECORD-…     struttura, metadati, collegamenti, assenza di segreti
@@ -190,6 +192,10 @@ cmd_sync() {
       echo "kb: ACCESSO NEGATO alla Knowledge Base: $(access_reason "$err"). Copia locale conservata, aggiornata al $quando." >&2
       echo "    Sostituire la credenziale da un terminale: /srv/ops/bin/kb token" >&2
       echo "$(date -u '+%F %H:%M UTC') accesso negato: $(access_reason "$err") (kb token)" > "$KB_DIR/.git/kb-errore"
+    elif [ "${CODEX_SANDBOX_NETWORK_DISABLED:-}" = 1 ]; then
+      # limite della sandbox dell'agente, non un guasto: stesso comando fuori dalla sandbox (regola ~/.codex/rules/ops.rules)
+      echo "kb: rete non disponibile nella SANDBOX dell'agente (limite della sandbox, non un guasto della Knowledge Base):" >&2
+      echo "    copia locale aggiornata al $quando; rieseguire /srv/ops/bin/kb sync fuori dalla sandbox" >&2
     else
       echo "kb: repository non raggiungibile: uso la copia locale, aggiornata al $quando (potrebbe non essere aggiornata)" >&2
     fi

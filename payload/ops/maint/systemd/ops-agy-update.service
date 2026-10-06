@@ -1,0 +1,11 @@
+[Unit]
+Description=ops: aggiornamento controllato di Antigravity CLI (root, /opt/ops-agenti)
+Documentation=file:///srv/ops/docs/runbooks/manutenzione.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ops-agy update
+TimeoutStartSec=30min
+PrivateTmp=yes

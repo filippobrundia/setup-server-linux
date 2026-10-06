@@ -17,8 +17,10 @@ Un'interruzione si riprende dal primo passo non completato: ogni controllo è ri
 **Problemi:** si registrano in `STATUS.md` solo quando **riscontrati** su questa macchina; le voci "Controllo
 ereditato" indicano cosa verificare perché sul server di origine era un limite noto.
 
-Già fatto da `bootstrap.sh`: `/srv/ops` con regole, documenti e script; Node.js 22 (NodeSource) e Claude Code per
-l'amministratore; adattatori nella home; componenti di manutenzione installati **senza** unit abilitate.
+Già fatto da `bootstrap.sh`: `/srv/ops` con regole, documenti e script; Node.js 22 (NodeSource); i quattro agenti
+(Claude Code, Codex CLI, Antigravity CLI, Gemini CLI) con sandbox e permessi, verificati nell'ambiente senza login;
+l'agente della sessione scelto dal proprietario (`AGENTE` in `host.conf`; login e collaudo con il comando `agente`,
+`docs/runbooks/agenti.md`); adattatori nella home; componenti di manutenzione installati **senza** unit abilitate.
 
 **Script dei passi** (`docs/bootstrap/passo*.sh`, collaudati su Ubuntu 26.04): eseguono i passi 3, 5–10 e le verifiche
 del 12 con PRECHECK → BACKUP → MODIFICA → VERIFY, manifest in `/var/lib/ops-bootstrap/` e `--rollback`;
@@ -143,7 +145,7 @@ altre regole di `AGENTS.md`.
 
 - **Controllo:** `git -C /srv/ops status` pulito; `git log --oneline | tail -1` = distribuzione del pacchetto.
 - **Se manca:** rieseguire `bootstrap.sh` (ripetibile).
-- **Verifica:** l'agente avviato con `claude` dalla home carica `AGENTS.md` (sezione 12, punto 7).
+- **Verifica:** l'agente della sessione, avviato con `agente`, carica `AGENTS.md` (sezione 12, punto 7).
 
 ## 5. Utenti, gruppi e permessi
 
@@ -337,10 +339,12 @@ soddisfatto (`docs/runbooks/manutenzione.md`, tabella "Installazione e attivazio
    `/srv` non veniva smontato allo spegnimento; se succede, registrarlo.
 5. **Accessi:** nuovo login SSH; `ufw status verbose` e `ss -tulpn` conformi.
 6. **Monitoraggio:** `bin/quick-check` senza errori; Healthchecks `up`.
-7. **Agenti:** `bin/cli-update --verify` superato (AGENTS.md caricato, permessi conformi).
+7. **Agenti:** `bin/cli-update --verify` superato: ambiente e sandbox dei quattro agenti (i problemi degli altri
+   agenti sono attenzioni, non bloccano) e collaudo operativo dell'agente della sessione (login, `AGENTS.md` caricato
+   con uscita 0, prova di isolamento della sandbox).
 8. **Attivazione:** `sudo /srv/ops/maint/install-maint enable window`; approvazione della finestra da parte del
    proprietario registrata in `docs/decisions.md`, poi `APPROVED=yes` in `/var/lib/ops-maint/inbox/window.conf`;
-   `sudo /srv/ops/maint/install-maint enable cli-update`.
+   `sudo /srv/ops/maint/install-maint enable cli-update` (attiva anche `ops-agy-update.timer`).
 9. **Chiusura:** `docs/` della macchina, `STATUS.md` ("Dove siamo rimasti": base completata), `CHANGELOG.md`;
    in `docs/bootstrap/avanzamento.md` la riga `STATO: COMPLETATO`; commit. Da qui si segue la gestione
    ordinaria di `AGENTS.md`.

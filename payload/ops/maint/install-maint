@@ -6,7 +6,7 @@
 #   sudo /srv/ops/maint/install-maint install --admin UTENTE   file, unit, stato; NESSUNA unit abilitata
 #   sudo /srv/ops/maint/install-maint enable postboot          verifica dopo i riavvii della finestra
 #   sudo /srv/ops/maint/install-maint enable window            timer della finestra (serve anche APPROVED=yes)
-#   sudo /srv/ops/maint/install-maint enable cli-update        timer dell'aggiornamento dei CLI
+#   sudo /srv/ops/maint/install-maint enable cli-update        timer dell'aggiornamento dei CLI (e di Antigravity, ops-agy)
 #   sudo /srv/ops/maint/install-maint disable window|cli-update|postboot
 #   /srv/ops/maint/install-maint status                        sola lettura, anche senza sudo
 #
@@ -23,7 +23,7 @@ INBOX=$STATE/inbox
 LOCK=/run/lock/ops-maint.lock
 UNITDIR=/etc/systemd/system
 TS=$(date -u +%Y%m%d-%H%M%S)
-UNITS="ops-maint-window.service ops-maint-window.timer ops-postboot.service ops-cli-update.service ops-cli-update.timer"
+UNITS="ops-maint-window.service ops-maint-window.timer ops-postboot.service ops-cli-update.service ops-cli-update.timer ops-agy-update.service ops-agy-update.timer"
 
 die()  { echo "STOP: $*" >&2; exit 3; }
 have_systemd() { [ -d /run/systemd/system ]; }
@@ -65,7 +65,7 @@ cmd_install() {
   [[ "$UBUNTU_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] && [[ "$UBUNTU_CODENAME" =~ ^[a-z]+$ ]] || die "versione Ubuntu non riconosciuta"
 
   echo "== PRECHECK"
-  bash -n "$SRC/ops-maint"; bash -n "$SRC/../bin/quick-check"; bash -n "$SRC/../bin/cli-update"
+  bash -n "$SRC/ops-maint"; bash -n "$SRC/ops-agy"; bash -n "$SRC/../bin/quick-check"; bash -n "$SRC/../bin/cli-update"
   if [ -e "$CONF" ]; then
     [ "$(conf_get ADMIN)" = "$ADMIN" ] || die "$CONF indica ADMIN=$(conf_get ADMIN), diverso da $ADMIN"
   fi
@@ -74,7 +74,7 @@ cmd_install() {
     if [ -e "$SRC/systemd/$u.tmpl" ]; then render "$SRC/systemd/$u.tmpl" > "$tmp/$u"; else cp "$SRC/systemd/$u" "$tmp/$u"; fi
     if [ -e "$UNITDIR/$u" ] && ! cmp -s "$tmp/$u" "$UNITDIR/$u" && ! ours "$UNITDIR/$u"; then die "$UNITDIR/$u esiste e non è nostro"; fi
   done
-  for f in /usr/local/sbin/ops-maint /etc/tmpfiles.d/ops-maint.conf; do
+  for f in /usr/local/sbin/ops-maint /usr/local/sbin/ops-agy /etc/tmpfiles.d/ops-maint.conf; do
     if [ -e "$f" ] && ! ours "$f"; then die "$f esiste e non è nostro"; fi
   done
 
@@ -84,6 +84,7 @@ cmd_install() {
   echo "== MODIFICA: file (nessuna unit abilitata)"
   install -d -m 0755 /usr/local/sbin /etc/tmpfiles.d "$UNITDIR"
   put "$SRC/ops-maint" /usr/local/sbin/ops-maint 0755
+  put "$SRC/ops-agy" /usr/local/sbin/ops-agy 0755
   put "$SRC/ops-maint.tmpfiles" /etc/tmpfiles.d/ops-maint.conf 0644
   for u in $UNITS; do put "$tmp/$u" "$UNITDIR/$u" 0644; done
   if [ -e "$CONF" ]; then echo "  invariato (mai sovrascritto): $CONF"
@@ -110,7 +111,7 @@ cmd_install() {
 
 cmd_status() {
   local u st
-  for u in ops-postboot.service ops-maint-window.timer ops-cli-update.timer; do
+  for u in ops-postboot.service ops-maint-window.timer ops-cli-update.timer ops-agy-update.timer; do
     if have_systemd; then st=$(systemctl is-enabled "$u" 2>/dev/null || true); else st="(systemd non attivo)"; fi
     printf '  %-26s %s\n' "$u" "${st:-assente}"
   done
@@ -136,8 +137,9 @@ cmd_enable() {
       grep -qx 'APPROVED=yes' "$INBOX/window.conf" || echo "  nota: finché window.conf non contiene APPROVED=yes la finestra non fa nulla" ;;
     cli-update)
       runuser -u "$ADMIN" -- /srv/ops/bin/cli-update --verify \
-        || die "verifica dei CLI non superata (login, permessi o caricamento di AGENTS.md): timer non attivato"
-      systemctl enable --now ops-cli-update.timer ;;
+        || die "verifica degli agenti non superata (agente della sessione: login, sandbox o caricamento di AGENTS.md): timer non attivati"
+      /usr/local/sbin/ops-agy verify >/dev/null || die "Antigravity (ops-agy verify) non conforme: timer non attivati"
+      systemctl enable --now ops-cli-update.timer ops-agy-update.timer ;;
     *) die "enable: postboot | window | cli-update" ;;
   esac
   echo "$(date -u '+%F %T') install-maint: abilitato $1" >> "$STATE/history.log"
@@ -149,7 +151,7 @@ cmd_disable() {
   case ${1:-} in
     postboot)   systemctl disable ops-postboot.service ;;
     window)     systemctl disable --now ops-maint-window.timer ;;
-    cli-update) systemctl disable --now ops-cli-update.timer ;;
+    cli-update) systemctl disable --now ops-cli-update.timer ops-agy-update.timer ;;
     *) die "disable: postboot | window | cli-update" ;;
   esac
   echo "$(date -u '+%F %T') install-maint: disabilitato $1" >> "$STATE/history.log"
