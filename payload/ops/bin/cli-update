@@ -115,7 +115,7 @@ run_agent() {  # $1 agente, $2 prompt, $3 file di uscita: in /srv/ops, senza ter
   case $1 in
     claude) (cd /srv/ops && timeout 300 claude -p "$2") ;;
     codex)  (cd /srv/ops && timeout 300 codex exec -s read-only --ephemeral --color never "$2") ;;
-    agy)    (cd /srv/ops && timeout 300 "$AGY" --sandbox --print-timeout 240s --print="$2") ;;
+    agy)    (cd /srv/ops && timeout --foreground --kill-after=10s 300 "$AGY" --sandbox --print-timeout 240s --print="$2") ;;
     gemini) (cd /srv/ops && timeout 300 gemini -p "$2") ;;
   esac < /dev/null > "$3" 2>&1
 }
