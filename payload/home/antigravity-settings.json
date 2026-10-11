@@ -3,13 +3,16 @@
   "toolPermission": "proceed-in-sandbox",
   "permissions": {
     "allow": [
-      "unsandboxed(/srv/ops/bin/quick-check)", "unsandboxed(regex:/srv/ops/bin/quick-check( --gate)?)",
-      "unsandboxed(regex:/srv/ops/bin/kb (sync|status|index|search)( .*)?)",
-      "unsandboxed(regex:/srv/ops/bin/cli-update --verify( [a-z]+)?)",
-      "unsandboxed(regex:systemctl (status|is-active|is-enabled|is-failed|list-units|list-unit-files|list-timers|show|cat)( .*)?)",
-      "unsandboxed(regex:journalctl( .*)?)",
-      "unsandboxed(regex:git (-C /srv/ops )?(add|commit|status|diff|log)( .*)?)"
+      "command(/srv/ops/bin/quick-check)",
+      "command(regex:/srv/ops/bin/quick-check( --gate)?)",
+      "command(regex:/srv/ops/bin/kb (sync|status|index|search)( .*)?)",
+      "command(regex:/srv/ops/bin/cli-update --verify( [a-z]+)?)",
+      "command(regex:systemctl (status|is-active|is-enabled|is-failed|list-units|list-unit-files|list-timers|show|cat)( .*)?)",
+      "command(regex:journalctl( .*)?)",
+      "command(regex:git (-C /srv/ops )?(add|commit|status|diff|log)( .*)?)"
     ],
-    "deny": ["command(sudo *)", "unsandboxed(sudo *)"]
+    "deny": [
+      "command(sudo *)"
+    ]
   }
 }

@@ -8,7 +8,7 @@ nello strumento che l'ha creata. L'**agente della sessione** è `AGENTE` in `hos
 |---|---|---|---|---|
 | Claude Code (`claude`) | npm `~/.npm-global` | account Anthropic (abbonamento Claude) | bubblewrap + socat, `failIfUnavailable`, nessuna uscita automatica | `excludedCommands` + `permissions.allow` in `~/.claude/settings.json` |
 | Codex CLI (`codex`) | npm `~/.npm-global` | account ChatGPT/OpenAI | bubblewrap (`workspace-write`, rete chiusa, `.git` protetto) | `~/.codex/rules/ops.rules` (`allow` = fuori dalla sandbox senza richiesta) |
-| Antigravity CLI (`agy`) | root, `/opt/ops-agenti/antigravity/agy` | account Google personale, piano Individual gratuito | namespace del kernel, profilo AppArmor `ops-agy` | `unsandboxed(...)` in `~/.gemini/antigravity-cli/settings.json` |
+| Antigravity CLI (`agy`) | root, `/opt/ops-agenti/antigravity/agy` | account Google personale, piano Individual gratuito | namespace del kernel, profilo AppArmor `ops-agy` | `command(...)` in `~/.gemini/antigravity-cli/settings.json` |
 | Gemini CLI (`gemini`) | npm `~/.npm-global` | chiave API di Google AI Studio | sandbox nativa degli strumenti, bubblewrap + seccomp | stato reale del server leggibile nella sandbox; rete aggiuntiva soggetta ad approvazione |
 
 In tutti: `sudo` vietato, nessuna modalità che salta sandbox o approvazioni, autoaggiornamento disattivato
