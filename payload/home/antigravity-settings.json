@@ -10,7 +10,8 @@
       "command(regex:systemctl (status|is-active|is-enabled|is-failed|list-units|list-unit-files|list-timers|show|cat)( .*)?)",
       "command(regex:journalctl( .*)?)",
       "command(regex:git (-C /srv/ops )?(add|commit|status|diff|log)( .*)?)",
-      "write_file(/srv/ops)"
+      "write_file(/srv/ops)",
+      "read_file(/etc/fstab)"
     ],
     "deny": [
       "command(sudo *)"

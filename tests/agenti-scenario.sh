@@ -317,3 +317,7 @@ bash "$PKG/bootstrap.sh" --admin tester --agente gpt "${KBARGS[@]}" > /tmp/out.t
 [ "$rc" = 3 ] && grep -q -- '--agente: claude, codex, agy' /tmp/out.txt && [ "$(runuser -u tester -- git -C /srv/ops rev-parse HEAD)" = "$head1" ] && pass "A28c --agente non valido: fermo prima di ogni modifica" || { bad "A28c (rc=$rc)"; tail -3 /tmp/out.txt; }
 t "repository di prova pulito dopo A28" bash -c "[ -z \"\$(runuser -u tester -- git -C /srv/ops status --porcelain)\" ]"
 rm -rf $AG
+
+# Regressioni del collaudo reale Antigravity, 2026-10-11.
+t "A29 regole Antigravity valide, workspace scrivibile e fstab leggibile" jq -e '.enableTerminalSandbox == true and (.permissions.allow | index("write_file(/srv/ops)")) and (.permissions.allow | index("read_file(/etc/fstab)")) and (.permissions.deny | index("command(sudo *)")) and ([.permissions.allow[], .permissions.deny[]] | all(startswith("unsandboxed(") | not))' $TH/.gemini/antigravity-cli/settings.json
+t "A29 timeout Antigravity resta nel gruppo del terminale e forza arresto" grep -Fq 'timeout --foreground --kill-after=10s 300 "$AGY"' /srv/ops/bin/cli-update

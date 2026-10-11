@@ -514,6 +514,12 @@ as_admin install -d -m 0700 "$AHOME/.codex" "$AHOME/.codex/rules"
 [ -e "$CXC" ] || { install -o "$ADMIN" -g "$ADMIN" -m 0600 "$PKG/payload/home/codex-config.toml" "$CXC"; log "  creato $CXC"; }
 cmp -s "$CXR" "$PKG/payload/home/codex-ops.rules" || { install -o "$ADMIN" -g "$ADMIN" -m 0644 "$PKG/payload/home/codex-ops.rules" "$CXR"; log "  regole di Codex: $CXR"; }
 merge_json "$AGS" "$PKG/payload/home/antigravity-settings.json" 0600
+# Migra le regole obsolete e rende scrivibile soltanto il workspace amministrativo.
+jq '.permissions.allow = (((.permissions.allow // []) | map(sub("^unsandboxed\\("; "command("))) + ["write_file(/srv/ops)", "read_file(/etc/fstab)"] | unique) | .permissions.deny = (((.permissions.deny // []) | map(sub("^unsandboxed\\("; "command("))) + ["command(sudo *)"] | unique)' "$AGS" > "$STAGE/agy-current.json"
+if ! cmp -s <(jq -S . "$AGS") <(jq -S . "$STAGE/agy-current.json"); then
+  cp -p "$AGS" "$AGS.bak-$TS"
+  install -o "$ADMIN" -g "$ADMIN" -m 0600 "$STAGE/agy-current.json" "$AGS"
+fi
 merge_json "$GMS" "$PKG/payload/home/gemini-settings.json" 0600
 # Migrazione obbligatoria dal contenitore completo 0.7.0 alla sandbox degli strumenti.
 # Il processo della CLI vede l'host; ogni strumento usa bubblewrap e seccomp.
