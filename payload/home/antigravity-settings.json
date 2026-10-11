@@ -9,7 +9,8 @@
       "command(regex:/srv/ops/bin/cli-update --verify( [a-z]+)?)",
       "command(regex:systemctl (status|is-active|is-enabled|is-failed|list-units|list-unit-files|list-timers|show|cat)( .*)?)",
       "command(regex:journalctl( .*)?)",
-      "command(regex:git (-C /srv/ops )?(add|commit|status|diff|log)( .*)?)"
+      "command(regex:git (-C /srv/ops )?(add|commit|status|diff|log)( .*)?)",
+      "write_file(/srv/ops)"
     ],
     "deny": [
       "command(sudo *)"
