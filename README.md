@@ -13,6 +13,8 @@ Versione: vedi `VERSION`.
 > sandbox (Claude Code, Codex CLI, Antigravity CLI, Gemini CLI) e fa scegliere quello della sessione; integra le
 > correzioni del collaudo 0.6.0. Gemini usa ora la sandbox nativa degli strumenti: sulla VM Ubuntu 26.04.1
 > legge il server e protegge la home (11 ottobre, Gemini 0.63.0, nessuna chiamata al modello).
+> Correzione Gemini dell'11 ottobre: 313/313 su Ubuntu 24.04 e 26.04 dal commit fisso `34b6f1f`.
+> Login reale e flusso della VM ancora da completare; dettagli in `payload/ops/docs/bootstrap/gemini-collaudo-2026-10-11.md`.
 > Prove ancora mancanti: sezione "Collaudo".
 
 ## Installazione (release identificata, integrità verificata)
