@@ -21,6 +21,7 @@ MAINT=${MAINT_BIN:-/usr/local/sbin/ops-maint}
 HOSTCONF=${OPS_HOSTCONF:-/srv/ops/host.conf}
 AGY=${OPS_AGY_BIN:-/opt/ops-agenti/antigravity/agy}
 OPS_AGY=${OPS_AGY_CMD:-/usr/local/sbin/ops-agy}
+GEMINI_CHECK=${OPS_GEMINI_CHECK:-/srv/ops/bin/gemini-sandbox-check.mjs}
 DRY=${DRY_RUN:-0}
 TUTTI="claude codex agy gemini"
 PROMPT="Rispondi solo con ciò che sai già dal contesto iniziale, senza eseguire comandi né leggere file. Da quale file vengono le istruzioni di progetto che hai ricevuto all'avvio? Qual è la sequenza obbligatoria per gli interventi importanti?"
@@ -63,7 +64,7 @@ perms_ok() {  # nessuna modalità che salta approvazioni o sandbox, nessun autoa
             jq -e '.enableTerminalSandbox == true and (.toolPermission == "proceed-in-sandbox" or .toolPermission == "request-review")
                    and ([.permissions.deny[]? | select(test("sudo"))] | length > 0)' "$f" >/dev/null 2>&1 ;;
     gemini) f=$HOME/.gemini/settings.json
-            jq -e '.tools.sandbox == "podman" and (.general.defaultApprovalMode // "default") != "yolo" and .general.enableAutoUpdate == false' "$f" >/dev/null 2>&1 ;;
+            jq -e '.tools.sandbox == false and .security.toolSandboxing == true and .security.disableYoloMode == true and (.general.defaultApprovalMode // "default") != "yolo" and .general.enableAutoUpdate == false' "$f" >/dev/null 2>&1 ;;
   esac
 }
 bwrap_ok() {  # bubblewrap crea i namespace (loopback di rete compreso) senza privilegi: profilo AppArmor adeguato
@@ -89,9 +90,9 @@ ambiente() {  # $1 agente: stampa il motivo ed esce con 1 se non conforme
     codex)  bwrap_ok || { echo "bubblewrap assente o senza namespace: $(tail -n 1 "$WORK/bwrap.txt" 2>/dev/null)"; return 1; }
             m=$(codex_sandbox_ok) || { echo "$m"; return 1; } ;;
     agy)    m=$("$OPS_AGY" verify 2>&1) || { echo "ops-agy verify: $(grep '^KO' <<<"$m" | head -n 2 | paste -sd';' -)"; return 1; } ;;
-    gemini) command -v podman >/dev/null || { echo "podman assente (sandbox di Gemini CLI)"; return 1; }
-            podman unshare true > "$WORK/podman.txt" 2>&1 || { echo "podman rootless non funziona: $(tail -n 1 "$WORK/podman.txt")"; return 1; }
-            podman image exists "$(gemini_image)" 2>/dev/null || { echo "immagine della sandbox assente: podman pull $(gemini_image)"; return 1; } ;;
+    gemini) command -v bwrap >/dev/null || { echo "bubblewrap assente (sandbox nativa Gemini)"; return 1; }
+            "$GEMINI_CHECK" "$(command -v gemini)" /srv/ops > "$WORK/sandbox-gemini.txt" 2>&1 \
+              || { echo "sandbox nativa Gemini non conforme: $(tail -n 1 "$WORK/sandbox-gemini.txt")"; return 1; } ;;
   esac
 }
 auth_ok() {  # login presente, senza chiamate ai modelli
@@ -125,12 +126,12 @@ smoke() {  # AGENTS.md caricato all'avvio: testo atteso E uscita 0 (correzione d
 }
 isolamento() {  # l'agente esegue nella sua sandbox una scrittura nella home: il file NON deve comparire
   local a=$1 probe="$HOME/.ops-sandbox-probe-$1-$$" out="$WORK/isolamento-$1.txt"
-  [ "$a" = codex ] && return 0   # Codex: prova deterministica già fatta in ambiente (codex sandbox)
+  case $a in codex|gemini) return 0 ;; esac   # prova deterministica già superata in ambiente, senza modello
   rm -f "$probe"
   run_agent "$a" "Prova di isolamento della sandbox. Usa lo strumento terminale ed esegui esattamente questo comando, senza alternative e senza chiedere di uscire dalla sandbox: touch '$probe' ; poi riporta testualmente l'output o l'errore." "$out" || true
   if [ -e "$probe" ]; then rm -f "$probe"; log "$a: VERIFICA FALLITA, isolamento violato: la scrittura nella home è riuscita (dettagli in $out)"; return 1; fi
   if grep -qiE 'read-only|permission denied|not permitted|EROFS|sola lettura|denied|negat' "$out"; then log "$a: isolamento dimostrato (scrittura nella home negata dalla sandbox)"
-  else log "$a: isolamento NON DIMOSTRATO: nessuna scrittura nella home, ma l'agente non ha riportato il rifiuto (dettagli in $out)"; fi
+  else log "$a: isolamento NON DIMOSTRATO: nessuna scrittura nella home, ma l'agente non ha riportato il rifiuto (dettagli in $out)"; return 1; fi
 }
 in_use() {  # processi reali dello strumento, di qualunque utente
   local re

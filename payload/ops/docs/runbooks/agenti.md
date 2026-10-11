@@ -9,7 +9,7 @@ nello strumento che l'ha creata. L'**agente della sessione** è `AGENTE` in `hos
 | Claude Code (`claude`) | npm `~/.npm-global` | account Anthropic (abbonamento Claude) | bubblewrap + socat, `failIfUnavailable`, nessuna uscita automatica | `excludedCommands` + `permissions.allow` in `~/.claude/settings.json` |
 | Codex CLI (`codex`) | npm `~/.npm-global` | account ChatGPT/OpenAI | bubblewrap (`workspace-write`, rete chiusa, `.git` protetto) | `~/.codex/rules/ops.rules` (`allow` = fuori dalla sandbox senza richiesta) |
 | Antigravity CLI (`agy`) | root, `/opt/ops-agenti/antigravity/agy` | account Google personale, piano Individual gratuito | namespace del kernel, profilo AppArmor `ops-agy` | `unsandboxed(...)` in `~/.gemini/antigravity-cli/settings.json` |
-| Gemini CLI (`gemini`) | npm `~/.npm-global` | chiave API gratuita di Google AI Studio | container podman rootless | nessuno: tutto il programma gira nel container (vedi Limiti) |
+| Gemini CLI (`gemini`) | npm `~/.npm-global` | chiave API di Google AI Studio | sandbox nativa degli strumenti, bubblewrap + seccomp | stato reale del server leggibile nella sandbox; rete aggiuntiva soggetta ad approvazione |
 
 In tutti: `sudo` vietato, nessuna modalità che salta sandbox o approvazioni, autoaggiornamento disattivato
 (aggiornamenti: `cli-update` e `ops-agy`, `docs/runbooks/manutenzione.md`).
@@ -55,8 +55,10 @@ fatturazione); `agente gemini` la chiede con input nascosto e la salva in `~/.ge
   prova reale: `bwrap --unshare-all` come amministratore;
 - Codex: `codex sandbox` legge `/srv/ops` e non scrive nella home;
 - Antigravity: binario e cartelle `root:root 0755`, profilo `ops-agy` caricato (`ops-agy verify`);
-- Gemini CLI: podman rootless (`podman unshare true`, intervalli in `/etc/subuid` e `/etc/subgid`) e immagine della
-  sandbox già scaricata.
+- Gemini CLI: `security.toolSandboxing=true`, contenitore completo disattivato, YOLO vietato. Il controllo
+  `gemini-sandbox-check.mjs` usa il motore realmente installato, senza modello: legge AGENTS.md, SSH e journal,
+  verifica scrittura nel workspace e rifiuto della scrittura nella home. API interna cambiata o sandbox non
+  funzionante: ambiente non conforme, nessun avvio automatico fuori sandbox.
 Nessuna sandbox dipende da Docker: Docker (passo 8 di `ops-installa`) può arrivare dopo.
 
 ## Limiti noti (2026-10-06)
@@ -67,10 +69,9 @@ Nessuna sandbox dipende da Docker: Docker (passo 8 di `ops-installa`) può arriv
   binario di root è la soluzione proposta, **da verificare sulla VM**; la prova di isolamento di `cli-update --verify`
   fa fallire il collaudo se la scrittura riesce, quindi un ripiego silenzioso non passa.
 - **Quota gratuita di Antigravity**: limitata e non documentata qui con numeri verificati; il collaudo usa due richieste.
-- **Gemini CLI**: la sandbox podman racchiude tutto il programma; i comandi che leggono il sistema ospite
-  (`quick-check`, `systemctl`, `journalctl`) dal container non vedono il server. È adatto a lavoro sui file di
-  `/srv/ops`, non alla gestione ordinaria completa. Nel piano gratuito della chiave API Google può usare i contenuti
-  inviati per migliorare i prodotti.
+- **Gemini CLI 0.63.0**: l'11 ottobre la sandbox nativa è stata provata sulla VM Ubuntu 26.04.1: legge servizi e
+  journal dell'host, scrive nel workspace e protegge la home. Il collegamento al modello con chiave vera resta da
+  collaudare. Nel piano gratuito della chiave API Google può usare i contenuti inviati per migliorare i prodotti.
 - La prova di isolamento dipende dal modello: se l'agente non riporta il rifiuto, l'esito è "isolamento NON
   DIMOSTRATO" (mai dato per buono).
 - `kb sync` esce con 0 anche quando usa la copia locale: il successo è solo la riga "sincronizzata:". La riuscita

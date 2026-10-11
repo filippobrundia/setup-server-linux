@@ -18,6 +18,15 @@
 
 echo "== A0 preparazione: utente con CLI simulati"
 AG=/tmp/ag; rm -rf $AG; mkdir -p $AG/ops; chmod 0777 $AG
+mkdir -p $AG/profiles/local
+printf 'profile bwrap /usr/bin/bwrap flags=(attach_disconnected) {\n}\n' > $AG/profiles/ubuntu-bwrap
+profile_code=$(sed -n '/^  ubuntu_bwrap=0$/,/^  if \[ "\$ubuntu_bwrap" = 1 \]; then$/p' "$PKG/bootstrap.sh" | sed '$d;s|/etc/apparmor.d/\*|/tmp/ag/profiles/*|')
+BWRAP_PROFILE=$AG/profiles/ops-bwrap
+eval "$profile_code"
+[ "$ubuntu_bwrap" = 1 ] && pass "A0 profilo Ubuntu trovato anche con directory local: nessun duplicato" || bad "A0 rilevamento profilo Ubuntu"
+mv $AG/profiles/ubuntu-bwrap $BWRAP_PROFILE
+eval "$profile_code"
+[ "$ubuntu_bwrap" = 0 ] && pass "A0 profilo gestito da solo non scambiato per profilo Ubuntu" || bad "A0 profilo gestito"
 id agtest >/dev/null 2>&1 || useradd -m -s /bin/bash agtest
 AH=/home/agtest; FB=$AH/.npm-global/bin
 runuser -u agtest -- mkdir -p $FB $AH/.claude $AH/.codex/rules $AH/.gemini/antigravity-cli
@@ -89,7 +98,13 @@ login_all
 HCA=$AG/ops/host.conf; CU=$PKG/payload/ops/bin/cli-update; AGC=$PKG/payload/ops/bin/agente
 hca() { printf '%s\n' "$@" > $HCA; chmod 0666 $HCA; }
 modes() { rm -f $AG/*.mode $AG/calls; for kv in "$@"; do echo "${kv#*=}" > "$AG/${kv%%=*}.mode"; done; chmod 0666 $AG/*.mode 2>/dev/null; :; }
-ENVV=(OPS_HOSTCONF=$HCA OPS_AGY_BIN=$AG/agy OPS_AGY_CMD=$FB/ops-agy MAINT_LOCK=$AG/lock MAINT_BIN=$AG/fake-maint)
+cat > $AG/gemini-check <<'EOF'
+#!/bin/bash
+[ "$(cat /tmp/ag/gemini-sandbox.mode 2>/dev/null || echo ok)" = ok ] || { echo 'KO sandbox nativa'; exit 1; }
+echo 'OK sandbox nativa simulata'
+EOF
+chmod 0755 $AG/gemini-check
+ENVV=(OPS_HOSTCONF=$HCA OPS_AGY_BIN=$AG/agy OPS_AGY_CMD=$FB/ops-agy OPS_GEMINI_CHECK=$AG/gemini-check MAINT_LOCK=$AG/lock MAINT_BIN=$AG/fake-maint)
 cuv() { runuser -u agtest -- env "${ENVV[@]}" "$@" > $AG/out 2>&1; echo $?; }
 calls() { cat $AG/calls 2>/dev/null; }
 
@@ -121,7 +136,7 @@ login_all; modes agy=leak; rc=$(cuv $CU --verify)
 modes; rc=$(cuv $CU --verify)
 [ "$rc" = 0 ] && grep -q 'agy: isolamento dimostrato' $AG/out && pass "A10a rifiuto della sandbox riportato: isolamento dimostrato" || { bad "A10a (rc=$rc)"; cat $AG/out; }
 modes agy=muto; rc=$(cuv $CU --verify)
-[ "$rc" = 0 ] && grep -q 'isolamento NON DIMOSTRATO' $AG/out && pass "A10b nessun rifiuto riportato: dichiarato NON DIMOSTRATO (mai dato per buono)" || { bad "A10b (rc=$rc)"; cat $AG/out; }
+[ "$rc" = 1 ] && grep -q 'isolamento NON DIMOSTRATO' $AG/out && pass "A10b nessun rifiuto riportato: NON DIMOSTRATO, verifica fallita" || { bad "A10b (rc=$rc)"; cat $AG/out; }
 
 echo "== A11–A16 ambiente e sandbox dei quattro agenti (senza login)"
 modes ops-agy=ko; hca 'AGENTE="codex"'; rc=$(cuv $CU --ambiente)
@@ -142,9 +157,9 @@ modes codex=sandboxwrite; rc=$(cuv $CU --ambiente codex)
 modes; echo 'approval_policy = "never"' >> $AH/.codex/config.toml; rc=$(cuv $CU --ambiente codex)
 [ "$rc" = 1 ] && pass "A14c Codex con approval_policy never: non conforme" || { bad "A14c (rc=$rc)"; cat $AG/out; }
 runuser -u agtest -- cp "$PKG/payload/home/codex-config.toml" $AH/.codex/config.toml
-modes podman=ko; rc=$(cuv $CU --ambiente gemini)
-[ "$rc" = 1 ] && grep -q 'podman rootless non funziona' $AG/out && pass "A15a Gemini CLI: podman rootless non funzionante → non conforme" || { bad "A15a (rc=$rc)"; cat $AG/out; }
-jq '.tools.sandbox = false' "$PKG/payload/home/gemini-settings.json" > $AG/gs.json; cp $AG/gs.json $AH/.gemini/settings.json; modes; rc=$(cuv $CU --ambiente gemini)
+modes gemini-sandbox=ko; rc=$(cuv $CU --ambiente gemini)
+[ "$rc" = 1 ] && grep -q 'sandbox nativa Gemini non conforme' $AG/out && pass "A15a Gemini CLI: sandbox nativa non funzionante → non conforme" || { bad "A15a (rc=$rc)"; cat $AG/out; }
+jq '.security.toolSandboxing = false' "$PKG/payload/home/gemini-settings.json" > $AG/gs.json; cp $AG/gs.json $AH/.gemini/settings.json; modes; rc=$(cuv $CU --ambiente gemini)
 [ "$rc" = 1 ] && pass "A15b Gemini CLI senza sandbox: non conforme" || { bad "A15b (rc=$rc)"; cat $AG/out; }
 runuser -u agtest -- cp "$PKG/payload/home/gemini-settings.json" $AH/.gemini/settings.json
 jq '.toolPermission = "always-proceed"' "$PKG/payload/home/antigravity-settings.json" > $AG/as.json; cp $AG/as.json $AH/.gemini/antigravity-cli/settings.json; rc=$(cuv $CU --ambiente agy)
@@ -234,11 +249,10 @@ t "A24 Antigravity di root (root:root 755) in /opt/ops-agenti, non modificabile 
 t "A24 SHA-512 di Antigravity verificato (log di ops-agy)" grep -q 'SHA-512 verificato' /var/log/ops-agy.log
 tn "A24 nessuna copia di agy nella home né modifiche a PATH e profili" bash -c "[ -e $TH/.local/bin/agy ] || grep -qi antigravity $TH/.bashrc $TH/.profile"
 t "A24 ops-agy verify (container: restrizione dei namespace non attiva, profilo non necessario)" runuser -u tester -- /usr/local/sbin/ops-agy verify
-t "A24 componenti delle sandbox installati (bubblewrap, socat, podman, uidmap, slirp4netns, passt)" bash -c "for p in bubblewrap socat podman uidmap slirp4netns passt; do dpkg-query -W -f='\${db:Status-Abbrev}' \$p | grep -q '^ii' || exit 1; done"
-t "A24 intervalli subuid/subgid dell'amministratore (podman rootless)" bash -c "grep -q '^tester:' /etc/subuid && grep -q '^tester:' /etc/subgid"
+t "A24 componenti delle sandbox installati (bubblewrap, socat)" bash -c "for p in bubblewrap socat; do dpkg-query -W -f='\${db:Status-Abbrev}' \$p | grep -q '^ii' || exit 1; done"
 t "A24 Claude Code: sandbox attiva, nessuna uscita automatica, sudo negato" jq -e '.sandbox.enabled and .sandbox.failIfUnavailable and (.sandbox.allowUnsandboxedCommands == false) and (.permissions.deny | index("Bash(sudo *)"))' $TH/.claude/settings.json
 t "A24 Antigravity: sandbox del terminale attiva, proceed-in-sandbox, sudo negato" jq -e '.enableTerminalSandbox and .toolPermission == "proceed-in-sandbox" and (.permissions.deny | index("command(sudo *)"))' $TH/.gemini/antigravity-cli/settings.json
-t "A24 Gemini CLI: sandbox podman, chiave API, nessun aggiornamento automatico" jq -e '.tools.sandbox == "podman" and .security.auth.selectedType == "gemini-api-key" and .general.enableAutoUpdate == false' $TH/.gemini/settings.json
+t "A24 Gemini CLI: sandbox nativa, chiave API, YOLO disabilitato, nessun aggiornamento automatico" jq -e '.tools.sandbox == false and .security.toolSandboxing == true and .security.disableYoloMode == true and .security.auth.selectedType == "gemini-api-key" and .general.enableAutoUpdate == false' $TH/.gemini/settings.json
 t "A24 Codex: config 0600 workspace-write / on-request" bash -c "[ \"\$(stat -c %a $TH/.codex/config.toml)\" = 600 ] && grep -qx 'sandbox_mode = \"workspace-write\"' $TH/.codex/config.toml && grep -qx 'approval_policy = \"on-request\"' $TH/.codex/config.toml"
 t "A24 AGENTS.md per Gemini CLI (context.fileName del progetto)" jq -e '.context.fileName == "AGENTS.md"' /srv/ops/.gemini/settings.json
 CXP() { runuser -u tester -- env -i HOME=$TH PATH="$TP" codex execpolicy check --rules $TH/.codex/rules/ops.rules -- "$@" 2>/dev/null | jq -r '.decision // "nessuna"'; }

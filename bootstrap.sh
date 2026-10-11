@@ -24,7 +24,7 @@
 #   2. /srv/ops: regole (AGENTS.md), adattatori, documenti, checklist, script, file di avanzamento; repository Git;
 #   3. i quattro agenti: Claude Code, Codex CLI e Gemini CLI con npm nell'account dell'amministratore (autoaggiornamento
 #      disattivato), Antigravity CLI da root in /opt/ops-agenti (ops-agy: SHA-512, profilo AppArmor mirato per la sandbox);
-#      componenti delle sandbox: bubblewrap e socat (Claude, Codex), podman rootless (Gemini CLI);
+#      componenti delle sandbox: bubblewrap (Claude, Codex, Gemini) e socat (Claude);
 #   4. adattatori nella home (funzioni in ~/.bash_aliases, ~/CLAUDE.md di solo rimando, impostazioni degli agenti);
 #   5. componenti della manutenzione installati con /srv/ops/maint/install-maint, NESSUNA unit abilitata.
 # Non partiziona, non formatta, non tocca rete, SSH, firewall, utenti o servizi, non avvia timer, non riavvia.
@@ -51,8 +51,8 @@ NS_PIN=/etc/apt/preferences.d/nodejs
 MARK_BEGIN='# >>> ops: strumenti di amministrazione'
 MARK_END='# <<< ops <<<'
 BASE_PKGS="git curl ca-certificates gnupg jq openssh-client"
-# componenti delle sandbox degli agenti: bubblewrap e socat (Claude Code, Codex), podman rootless (Gemini CLI)
-SANDBOX_PKGS="bubblewrap socat podman uidmap slirp4netns passt apparmor"
+# componenti delle sandbox degli agenti: bubblewrap (Claude Code, Codex, Gemini) e socat (Claude Code)
+SANDBOX_PKGS="bubblewrap socat apparmor"
 AGY=/opt/ops-agenti/antigravity/agy
 BWRAP_PROFILE=/etc/apparmor.d/ops-bwrap
 # blocchi ~/.bash_aliases delle versioni precedenti (0.1.0–0.6.0): sostituiti senza conflitto
@@ -134,6 +134,7 @@ for f in payload/ops/AGENTS.md.tmpl payload/ops/maint/install-maint payload/ops/
   [ -f "$PKG/$f" ] || die "pacchetto incompleto: manca $f"
 done
 for f in "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/ops-agy" "$PKG/payload/ops/maint/install-maint" "$PKG"/payload/ops/docs/bootstrap/*.sh "$PKG/payload/ops/docs/bootstrap/ops-installa"; do
+  case $f in *.mjs) if command -v node >/dev/null; then node --check "$f" || die "errore di sintassi in $f"; fi; continue ;; esac
   bash -n "$f" || die "errore di sintassi in $f"
 done
 
@@ -242,8 +243,8 @@ if [ -e "$AGS" ]; then
 fi
 if [ -e "$GMS" ]; then
   if ! jq -e . "$GMS" >/dev/null 2>&1; then conflict "$GMS non è JSON valido"
-  elif jq -e '.tools.sandbox == false or .general.defaultApprovalMode == "yolo"' "$GMS" >/dev/null; then conflict "$GMS disattiva la sandbox o le approvazioni di Gemini CLI"
-  else plan "integra in $GMS sandbox podman e permessi del pacchetto (chiavi assenti)"; fi
+  elif jq -e '(.tools.sandbox == false and .security.toolSandboxing != true) or .general.defaultApprovalMode == "yolo"' "$GMS" >/dev/null; then conflict "$GMS disattiva la sandbox o le approvazioni di Gemini CLI"
+  else plan "integra in $GMS sandbox nativa degli strumenti e permessi del pacchetto"; fi
 fi
 [ ! -e "$AHOME/.local/bin/agy" ] || plan "nota: $AHOME/.local/bin/agy (installazione precedente nella home) non viene più usato: Antigravity sta in $AGY"
 if [ -e /opt/ops-agenti ] && [ ! -x "$AGY" ]; then conflict "/opt/ops-agenti esiste ma non contiene Antigravity del pacchetto"; fi
@@ -463,13 +464,34 @@ npm_agent() {  # $1 comando, $2 pacchetto, $3 dist-tag (lo stesso di cli-update)
 npm_agent claude @anthropic-ai/claude-code stable   # canale stable, come cli-update
 npm_agent codex @openai/codex latest
 npm_agent gemini @google/gemini-cli latest
+node --check "$OPS/bin/gemini-sandbox-check.mjs" || die "controllo sandbox Gemini non valido"
 # Antigravity: binario di root in /opt/ops-agenti, profilo AppArmor mirato se la restrizione dei namespace è attiva
 bash "$STAGE/ops/maint/ops-agy" install 2>&1 | sed 's/^/  /' | tee -a "$LOG"; [ "${PIPESTATUS[0]}" = 0 ] || die "Antigravity CLI: installazione non riuscita (ops-agy)"
 # bubblewrap (Claude Code, Codex): Ubuntu 25.04+ ha già un profilo per /usr/bin/bwrap; dove manca e la restrizione dei
 # namespace è attiva (24.04) si installa il profilo mirato indicato dalla documentazione di Claude Code, solo per bwrap
 if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = 1 ] && [ -d /sys/kernel/security/apparmor ] \
    && command -v apparmor_parser >/dev/null; then
-  if grep -lsE '^[[:space:]]*profile[[:space:]]+[^[:space:]]+[[:space:]]+/usr/bin/bwrap[[:space:]]' /etc/apparmor.d/* | grep -qv "^$BWRAP_PROFILE$"; then
+  # Non cercare anche nelle directory: grep restituisce 2 e pipefail
+  # scambia un profilo presente per assente, creando un attachment duplicato.
+  ubuntu_bwrap=0
+  for profile_file in /etc/apparmor.d/*; do
+    [ -f "$profile_file" ] && [ "$profile_file" != "$BWRAP_PROFILE" ] || continue
+    if grep -qE '^[[:space:]]*profile[[:space:]]+[^[:space:]]+[[:space:]]+/usr/bin/bwrap[[:space:]]' "$profile_file"; then
+      ubuntu_bwrap=1; break
+    fi
+  done
+  if [ "$ubuntu_bwrap" = 1 ]; then
+    if [ -f "$BWRAP_PROFILE" ]; then
+      grep -q '^# ops-bwrap — gestito da setup-server-linux:' "$BWRAP_PROFILE" || die "profilo bwrap locale non riconosciuto: $BWRAP_PROFILE"
+      cp -p "$BWRAP_PROFILE" "$BWRAP_PROFILE.bak-$TS"
+      # La copia non deve restare fra i profili caricabili da AppArmor.
+      install -d -m 0700 /var/backups/ops-bootstrap
+      mv "$BWRAP_PROFILE.bak-$TS" /var/backups/ops-bootstrap/
+      if grep -q '^ops-bwrap ' /sys/kernel/security/apparmor/profiles; then apparmor_parser -R "$BWRAP_PROFILE"; fi
+      rm -- "$BWRAP_PROFILE"
+      apparmor_parser -r -W "$profile_file" || die "profilo Ubuntu bwrap non caricato"
+      log "  rimosso il profilo ops-bwrap duplicato (copia in /var/backups/ops-bootstrap)"
+    fi
     log "  bubblewrap: profilo AppArmor di Ubuntu già presente"
   else
     bash "$STAGE/ops/maint/ops-agy" profilo bwrap > "$STAGE/ops-bwrap"
@@ -479,13 +501,6 @@ if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null |
     log "  bubblewrap: profilo AppArmor ops-bwrap caricato (solo /usr/bin/bwrap)"
   fi
 else log "  AppArmor: restrizione dei namespace non attiva qui, nessun profilo per bubblewrap"; fi
-# podman rootless (sandbox di Gemini CLI): intervalli subordinati di uid/gid dell'amministratore
-for f in subuid subgid; do
-  if ! grep -q "^$ADMIN:" "/etc/$f"; then
-    st=$(awk -F: '{e = $2 + $3} e > m {m = e} END {print (m > 100000 ? m : 100000)}' "/etc/$f" 2>/dev/null || echo 100000)
-    usermod "--add-${f}s" "$st-$((st + 65535))" "$ADMIN"; log "  /etc/$f: intervallo $st-$((st + 65535)) per $ADMIN (podman rootless)"
-  fi
-done
 # configurazioni: sandbox attive, comandi ordinari consentiti, sudo vietato; chiavi esistenti mai sovrascritte
 merge_json() {  # $1 file dell'amministratore, $2 modello del pacchetto, $3 modo: aggiunge solo le chiavi assenti
   as_admin install -d -m 0700 "$(dirname "$1")"
@@ -500,12 +515,13 @@ as_admin install -d -m 0700 "$AHOME/.codex" "$AHOME/.codex/rules"
 cmp -s "$CXR" "$PKG/payload/home/codex-ops.rules" || { install -o "$ADMIN" -g "$ADMIN" -m 0644 "$PKG/payload/home/codex-ops.rules" "$CXR"; log "  regole di Codex: $CXR"; }
 merge_json "$AGS" "$PKG/payload/home/antigravity-settings.json" 0600
 merge_json "$GMS" "$PKG/payload/home/gemini-settings.json" 0600
-# immagine della sandbox di Gemini CLI (stessa versione del programma), scaricata ora e non durante la prima sessione
-gv=$(as_admin gemini --version 2>/dev/null | head -1)
-GIMG="us-docker.pkg.dev/gemini-code-dev/gemini-cli/sandbox:$gv"
-if [[ "$gv" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && as_admin sh -c "podman image exists '$GIMG' || podman pull -q '$GIMG'" >> "$LOG" 2>&1; then
-  log "  Gemini CLI: immagine della sandbox presente ($GIMG)"
-else log "  ATTENZIONE: immagine della sandbox di Gemini CLI non scaricata ($GIMG; dettagli in $LOG)"; fi
+# Migrazione obbligatoria dal contenitore completo 0.7.0 alla sandbox degli strumenti.
+# Il processo della CLI vede l'host; ogni strumento usa bubblewrap e seccomp.
+jq '.tools.sandbox = false | .security.toolSandboxing = true | .security.disableYoloMode = true' "$GMS" > "$STAGE/gemini-native.json"
+if ! cmp -s <(jq -S . "$GMS") <(jq -S . "$STAGE/gemini-native.json"); then
+  cp -p "$GMS" "$GMS.bak-$TS"
+  install -o "$ADMIN" -g "$ADMIN" -m 0600 "$STAGE/gemini-native.json" "$GMS"
+fi
 
 log "== 4/5 adattatori nella home"
 if [ ! -e "$AHOME/CLAUDE.md" ]; then install -o "$ADMIN" -g "$ADMIN" -m 0644 "$STAGE/home-CLAUDE.md" "$AHOME/CLAUDE.md"; log "  creato ~/CLAUDE.md"; fi

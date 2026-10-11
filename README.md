@@ -11,7 +11,9 @@ Versione: vedi `VERSION`.
 > produzione incompleta" e un difetto (D1). La 0.5.1 corregge D1; la 0.6.0 rende la Knowledge Base facoltativa, con
 > repository scelto dall'utente e lettura via HTTPS. La 0.7.0 installa sempre quattro agenti di amministrazione con
 > sandbox (Claude Code, Codex CLI, Antigravity CLI, Gemini CLI) e fa scegliere quello della sessione; integra le
-> correzioni del collaudo 0.6.0. Prove ancora mancanti: sezione "Collaudo".
+> correzioni del collaudo 0.6.0. Gemini usa ora la sandbox nativa degli strumenti: sulla VM Ubuntu 26.04.1
+> legge il server e protegge la home (11 ottobre, Gemini 0.63.0, nessuna chiamata al modello).
+> Prove ancora mancanti: sezione "Collaudo".
 
 ## Installazione (release identificata, integrità verificata)
 
@@ -60,7 +62,7 @@ Sistemi: Ubuntu Server LTS; collaudo su macchina reale con **Ubuntu 26.04** (VM)
 
 | Novità o correzione | Dove |
 |---|---|
-| **Quattro agenti sempre installati**, ciascuno con programma reale, dipendenze, sandbox e permessi: Claude Code (npm, bubblewrap + socat), Codex CLI (npm, bubblewrap, config e regole), **Antigravity CLI** (Google, account personale gratuito; binario ufficiale con SHA-512 in `/opt/ops-agenti`, di root, profilo AppArmor mirato `ops-agy`, aggiornamenti da root con `ops-agy`), Gemini CLI (Google, chiave API; container podman rootless) | `bootstrap.sh`, `maint/ops-agy`, `payload/home/*` |
+| **Quattro agenti sempre installati**, ciascuno con programma reale, dipendenze, sandbox e permessi: Claude Code (npm, bubblewrap + socat), Codex CLI (npm, bubblewrap, config e regole), **Antigravity CLI** (Google, account personale gratuito; binario ufficiale con SHA-512 in `/opt/ops-agenti`, di root, profilo AppArmor mirato `ops-agy`, aggiornamenti da root con `ops-agy`), Gemini CLI (Google, chiave API; sandbox nativa degli strumenti con bubblewrap e seccomp) | `bootstrap.sh`, `maint/ops-agy`, `payload/home/*` |
 | Domanda finale "Con quale agente vuoi avviare la sessione?" (`AGENTE` in `host.conf`) e comando unico **`agente`** per cambiarlo in seguito, senza reinstallare e senza toccare l'avanzamento: login guidato del solo agente scelto, collaudo operativo, avvio in `/srv/ops`, scelta di un altro agente se quello scelto non è utilizzabile | `bin/agente`, `bootstrap.sh` |
 | `cli-update`: ambiente e sandbox dei quattro senza login (`--ambiente`), collaudo operativo del solo agente della sessione (`--verify`: login, `AGENTS.md` con uscita 0, prova di isolamento); un agente non autenticato, senza abbonamento o con quota esaurita non blocca. Integra la correzione locale della VM (commit `96f2579`): `host.conf` letto senza eseguirlo, dichiarazioni doppie respinte, uscita non zero = fallimento; `AGENTI_CLI="codex"` della VM resta accettato | `bin/cli-update` |
 | Codex: bubblewrap tra i prerequisiti, `workspace-write` + `on-request`, regole `allow` per i comandi ordinari (eseguiti fuori dalla sandbox senza richiesta), `sudo` vietato; nessun `danger-full-access` | `codex-config.toml`, `codex-ops.rules` |
@@ -165,9 +167,9 @@ lo richiede: `npm view @anthropic-ai/claude-code@stable version engines` → `2.
 
 | Fa | Non fa |
 |---|---|
-| installa `git curl ca-certificates gnupg jq`, i componenti delle sandbox (`bubblewrap socat podman uidmap slirp4netns passt apparmor`) e Node.js 22 da NodeSource (chiave verificata per impronta) | partizionare, formattare, montare dischi |
+| installa `git curl ca-certificates gnupg jq`, i componenti delle sandbox (`bubblewrap socat apparmor`) e Node.js 22 da NodeSource (chiave verificata per impronta) | partizionare, formattare, montare dischi |
 | crea `/srv/ops` (repository Git) con regole, adattatori, documenti, checklist, script, `host.conf` | toccare rete, SSH, firewall, gruppi o privilegi degli utenti, hostname |
-| installa i quattro agenti (Claude Code, Codex CLI, Gemini CLI con npm per l'amministratore; Antigravity CLI da root in `/opt/ops-agenti`), autoaggiornamento disattivato, sandbox e permessi configurati; profili AppArmor mirati `ops-agy` e, solo dove manca quello di Ubuntu, `ops-bwrap`; intervalli subuid/subgid per podman rootless | attivare timer o servizi: tutte le unit `ops-*` restano disabilitate; attivare servizi a pagamento; disattivare restrizioni globali di Ubuntu |
+| installa i quattro agenti (Claude Code, Codex CLI, Gemini CLI con npm per l'amministratore; Antigravity CLI da root in `/opt/ops-agenti`), autoaggiornamento disattivato, sandbox e permessi configurati; profili AppArmor mirati `ops-agy` e, solo dove manca quello di Ubuntu, `ops-bwrap` | attivare timer o servizi: tutte le unit `ops-*` restano disabilitate; attivare servizi a pagamento; disattivare restrizioni globali di Ubuntu |
 | aggiunge nella home un blocco marcato in `~/.bash_aliases`, `~/CLAUDE.md` di solo rimando, le impostazioni di Claude | copiare istruzioni nella home (l'unica fonte è `/srv/ops/AGENTS.md`) |
 | installa i file della manutenzione con `/srv/ops/maint/install-maint install` e il comando unico `/usr/local/sbin/ops-installa` con le impronte del pacchetto in `/var/lib/ops-bootstrap` | installare applicazioni, Docker, backup, agenti applicativi (Docker e backup li installa `ops-installa`, lanciato dal proprietario dopo la dichiarazione dei parametri) |
 
@@ -207,22 +209,22 @@ prove delle versioni precedenti). Distinzione:
 - **Prove simulate** (CLI finti, nessun modello contattato): agente della sessione e compatibilità `AGENTI_CLI`; altri
   agenti senza login che non bloccano; uscita non zero con testo atteso (consegna 0.6.0); quota esaurita; login
   mancante; isolamento violato (ripiego fuori dalla sandbox) e "NON DIMOSTRATO"; ambiente non conforme per bubblewrap,
-  sandbox di Codex, podman, impostazioni di Claude, Antigravity e Gemini CLI; esecuzione con ambiente vuoto (timer);
+  sandbox di Codex e Gemini nativo, impostazioni di Claude, Antigravity e Gemini CLI; esecuzione con ambiente vuoto (timer);
   aggiornamento (Antigravity mai da `cli-update`); `quick-check` sull'ultimo esito; comando `agente` (domanda, login del
   solo agente scelto, collaudo, commit, avvio, ripiego su un altro, input terminato); `kb sync` nella sandbox di Codex;
   `ops-installa --piano` con `AGENTE`.
 - **Prove reali in container** (pacchetti, npm e download veri; nessun login; Docker non permette namespace): i quattro
   agenti installati ed eseguibili senza shell interattiva; Antigravity 1.3.0 dal manifest ufficiale con SHA-512 in
   `/opt/ops-agenti` (`root:root 755`, non scrivibile dall'amministratore, nessuna modifica a PATH e profili);
-  componenti delle sandbox e subuid/subgid; configurazioni dei quattro; regole di Codex con `codex execpolicy check`
+  componenti delle sandbox; configurazioni dei quattro; regole di Codex con `codex execpolicy check`
   reale; profili `ops-agy` e `ops-bwrap` accettati da `apparmor_parser`; blocco `.bash_aliases` della 0.6.0 aggiornato;
-  domanda finale con risposta non valida e valida. In container bubblewrap e podman **non** creano namespace:
+  domanda finale con risposta non valida e valida. In container bubblewrap **non** crea namespace:
   "AMBIENTE NON CONFORME" atteso.
 - **Prove reali sul server di origine** (senza modifiche ad AppArmor): restrizione dei namespace attiva; Codex senza
   bubblewrap di Ubuntu non avvia la sandbox; Antigravity 1.2.16 senza profilo non avvia la sandbox
   (`sbox: bringLoopbackUp: … operation not permitted`) e ripiega fuori; regole di Codex con `codex execpolicy`.
 - **Non provato** (prossima VM): sandbox di Antigravity con `ops-agy`, flusso `agente` con login reale da SSH,
-  `ops-bwrap` su 24.04 reale, Gemini CLI in podman rootless, `ops-agy update`/`rollback` reali, successo della
+  `ops-bwrap` su 24.04 reale, login e collaudo completo di Gemini CLI con chiave vera, `ops-agy update`/`rollback` reali, successo della
   sincronizzazione KB dal cron (visto partire, successo non dimostrato).
 
 **Fatto — in container (0.6.0).** `tests/run-container-test.sh` (Docker, container usa e getta senza systemd;

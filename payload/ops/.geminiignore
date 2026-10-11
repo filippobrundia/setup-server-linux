@@ -1,0 +1,3 @@
+# Credenziali mai incluse nel contesto di Gemini.
+.env
+.env.*
