@@ -286,3 +286,7 @@ con un fine-grained token vero), scadenza o revoca reale del token, sincronizzaz
 **Per la produzione servono inoltre:** rete stabile (7.1), volumi dedicati (2), copia remota con ripristino provato
 (10.3, 12.2 da remoto, 12.3), Healthchecks (11.2), `ops-maint attended` con `ops-postboot`, attivazione e prima
 esecuzione della finestra e del timer `ops-cli-update` (12.8): tutte escluse nel collaudo della 0.5.0.
+
+
+## Chiusura del collaudo locale (11 ottobre 2026)
+Antigravity operativo sulla VM Ubuntu 26.04: workspace scrivibile, home protetta, ripresa dopo riavvio riuscita. Correzioni del profilo bwrap, delle regole Antigravity e del timeout integrate. Gemini usa sandbox nativa dei tool; login API non collaudato. Guida unica: payload/ops/docs/bootstrap/guida-installazione-0.7.0.md. Rapporto e limiti: payload/ops/docs/bootstrap/chiusura-0.7.0.md. Validazione produzione incompleta; questa release resta pre-release.
