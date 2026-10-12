@@ -110,7 +110,8 @@ if [ "$rc" = 0 ] && [ -t 0 ]; then
   esac
   echo 'Il server e gia configurato. Per un agente diverso puo servire il suo login.'
   exec 9>&-
-  exec "$AGENTE_CMD" "$NEXT"
+  "$AGENTE_CMD" "$NEXT"
+  exit $?
  done
 fi
 exit "$rc"
