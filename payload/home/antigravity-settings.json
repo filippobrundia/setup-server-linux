@@ -13,7 +13,10 @@
       "write_file(/srv/ops)",
       "read_file(/etc/fstab)",
       "command(/usr/local/bin/ops-host-check --rileva)",
-      "command(/usr/local/bin/ops-host-check --piano)"
+      "command(/usr/local/bin/ops-host-check --piano)",
+      "read_file(/usr/local/bin/ops-host-check)",
+      "read_file(/usr/local/sbin/ops-installa)",
+      "read_file(/usr/local/lib/ops-bootstrap/rileva-parametri.sh)"
     ],
     "deny": [
       "command(sudo *)"

@@ -516,7 +516,7 @@ as_admin install -d -m 0700 "$AHOME/.codex" "$AHOME/.codex/rules"
 cmp -s "$CXR" "$PKG/payload/home/codex-ops.rules" || { install -o "$ADMIN" -g "$ADMIN" -m 0644 "$PKG/payload/home/codex-ops.rules" "$CXR"; log "  regole di Codex: $CXR"; }
 merge_json "$AGS" "$PKG/payload/home/antigravity-settings.json" 0600
 # Migra le regole obsolete e rende scrivibile soltanto il workspace amministrativo.
-jq --arg home "$AHOME" '.permissions.allow = (((.permissions.allow // []) | map(sub("^unsandboxed\\("; "command("))) + ["write_file(/srv/ops)", "read_file(/etc/fstab)", "command(/usr/local/bin/ops-host-check --rileva)", "command(/usr/local/bin/ops-host-check --piano)", ("read_file(" + $home + "/.bash_aliases)")] | unique) | .permissions.deny = (((.permissions.deny // []) | map(sub("^unsandboxed\\("; "command("))) + ["command(sudo *)"] | unique)' "$AGS" > "$STAGE/agy-current.json"
+jq --arg home "$AHOME" '.permissions.allow = (((.permissions.allow // []) | map(sub("^unsandboxed\\("; "command("))) + ["write_file(/srv/ops)", "read_file(/etc/fstab)", "command(/usr/local/bin/ops-host-check --rileva)", "command(/usr/local/bin/ops-host-check --piano)", "read_file(/usr/local/bin/ops-host-check)", "read_file(/usr/local/sbin/ops-installa)", "read_file(/usr/local/lib/ops-bootstrap/rileva-parametri.sh)", ("read_file(" + $home + "/.bash_aliases)")] | unique) | .permissions.deny = (((.permissions.deny // []) | map(sub("^unsandboxed\\("; "command("))) + ["command(sudo *)"] | unique)' "$AGS" > "$STAGE/agy-current.json"
 if ! cmp -s <(jq -S . "$AGS") <(jq -S . "$STAGE/agy-current.json"); then
   cp -p "$AGS" "$AGS.bak-$TS"
   install -o "$ADMIN" -g "$ADMIN" -m 0600 "$STAGE/agy-current.json" "$AGS"
