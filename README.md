@@ -290,3 +290,6 @@ esecuzione della finestra e del timer `ops-cli-update` (12.8): tutte escluse nel
 
 ## Chiusura del collaudo locale (11 ottobre 2026)
 Antigravity operativo sulla VM Ubuntu 26.04: workspace scrivibile, home protetta, ripresa dopo riavvio riuscita. Correzioni del profilo bwrap, delle regole Antigravity e del timeout integrate. Gemini usa sandbox nativa dei tool; login API non collaudato. Guida unica: payload/ops/docs/bootstrap/guida-installazione-0.7.0.md. Rapporto e limiti: payload/ops/docs/bootstrap/chiusura-0.7.0.md. Validazione produzione incompleta; questa release resta pre-release.
+
+## Flusso deterministico comune (12 ottobre 2026)
+Il collaudo su VM pulita ha mostrato che il prompt AI iniziale chiedeva approvazioni ordinarie ripetute. Il requisito non era soddisfatto. Ora installa-server.sh e install.sh --configura avviano configura-server nel terminale reale: rilevamento, parametri, piano, login del solo agente, sudo ops-installa e rapporto. La chat non esegue i passi. L'impronta dei parametri lega il piano dichiarato all'esecuzione; file del pacchetto e stato restano protetti da root. Le prove precedenti 315/315 non validano questa modifica; banco mirato e regressioni complete sono separati dal collaudo VM. Dettagli: payload/ops/docs/bootstrap/flusso-deterministico.md.

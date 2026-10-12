@@ -1,3 +1,5 @@
+> Percorso iniziale attuale (2026-10-12): usare `installa-server.sh` dal pacchetto, oppure `install.sh --configura` dal percorso pubblico, con profilo ed esclusioni dichiarati. Il flusso deterministico prepara, esegue e registra la base senza una chat del modello. Dopo un riavvio o interruzione: `configura-server`. Guida unica: `guida-installazione-0.7.0.md`. I passi qui sotto descrivono le verifiche e il recupero; non chiedere al proprietario di eseguirli o approvarli uno per uno.
+
 # Configurazione base di un server nuovo
 
 Checklist **eseguibile in ordine** per completare la base di questa macchina dopo la distribuzione del pacchetto
