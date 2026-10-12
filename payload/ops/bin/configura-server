@@ -78,7 +78,17 @@ REPORT=$OPS/docs/bootstrap/esito-configurazione.md
  echo; echo 'Log e stato: /var/log/ops-installa/. Le esclusioni non sono prove superate.'
  echo; "$OPS/bin/quick-check" || true
 } > "$REPORT"
+STATUS=$OPS/STATUS.md
+CHANGE=$OPS/CHANGELOG.md
+[ -f "$STATUS" ] || printf '# Stato della macchina\n' > "$STATUS"
+[ -f "$CHANGE" ] || printf '# Registro della macchina\n' > "$CHANGE"
+if [ "$rc" = 0 ]; then
+  sed -i 's/\*\*Configurazione iniziale in corso\*\*/**Configurazione iniziale eseguita: vedi esito deterministico**/' "$STATUS"
+fi
+printf '\n## Configurazione deterministica — %s\nCodice installer: %s. Profilo: %s. Esclusioni: %s. Rapporto: docs/bootstrap/esito-configurazione.md. Le esclusioni non valgono come prove superate per produzione.\n' "$(date -u +%FT%TZ)" "$rc" "$PROF" "${ESCL:-(nessuna)}" >> "$STATUS"
+printf '\n- %s — Configurazione deterministica, codice %s; rapporto salvato, esclusioni: %s.\n' "$(date -u +%F)" "$rc" "${ESCL:-(nessuna)}" >> "$CHANGE"
+git -C "$OPS" add STATUS.md CHANGELOG.md
 git -C "$OPS" add docs/bootstrap/esito-configurazione.md
-git -C "$OPS" diff --cached --quiet -- docs/bootstrap/esito-configurazione.md || git -C "$OPS" commit -m 'Esito della configurazione deterministica' -- docs/bootstrap/esito-configurazione.md
+git -C "$OPS" diff --cached --quiet -- docs/bootstrap/esito-configurazione.md || git -C "$OPS" commit -m 'Esito della configurazione deterministica' -- docs/bootstrap/esito-configurazione.md STATUS.md CHANGELOG.md
 cat "$REPORT"
 exit "$rc"

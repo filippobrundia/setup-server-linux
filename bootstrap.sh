@@ -50,7 +50,7 @@ NS_SOURCES=/etc/apt/sources.list.d/nodesource.sources
 NS_PIN=/etc/apt/preferences.d/nodejs
 MARK_BEGIN='# >>> ops: strumenti di amministrazione'
 MARK_END='# <<< ops <<<'
-BASE_PKGS="git curl ca-certificates gnupg jq openssh-client"
+BASE_PKGS="git curl ca-certificates gnupg jq openssh-client python3 iproute2 util-linux bsdutils"
 # componenti delle sandbox degli agenti: bubblewrap (Claude Code, Codex, Gemini) e socat (Claude Code)
 SANDBOX_PKGS="bubblewrap socat apparmor"
 AGY=/opt/ops-agenti/antigravity/agy
