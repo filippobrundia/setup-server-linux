@@ -15,7 +15,7 @@ hardware, versione di Ubuntu, ruolo della macchina, accesso da Internet e rete a
 
 **Configurazione iniziale.** Se `docs/bootstrap/avanzamento.md` contiene la riga `STATO: IN CORSO`, la macchina
 non ha ancora completato la base: segui "Esecuzione unica" in `docs/bootstrap/configurazione-server-base.md`.
-In breve: `bash docs/bootstrap/rileva-parametri.sh`, **una sola** richiesta a @@OWNER@@ dei dati mancanti (profilo,
+In breve:  (sul server reale, fuori sandbox con Antigravity)`bash docs/bootstrap/rileva-parametri.sh`, **una sola** richiesta a @@OWNER@@ dei dati mancanti (profilo,
 esclusioni, copia remota, monitoraggio), `host.conf` compilato con commit, `ops-installa --piano` pulito; poi
 @@OWNER@@ lancia da una sessione SSH `sudo ops-installa` (una password per esecuzione) e tu leggi gli esiti in
 `/var/log/ops-installa/` (senza sudo, senza fargli copiare output). `ops-installa` aggiorna l'avanzamento da solo.
@@ -214,3 +214,6 @@ Questo file è l'unica fonte di istruzioni. Adattatori, senza istruzioni proprie
   `AGENTS.md`; il login personale ("Login with Google") è stato dismesso da Google il 2026-06-18.
 Dalla home, `claude`, `codex`, `agy`, `gemini` e `agente` sono funzioni di shell (`~/.bash_aliases`) che lavorano in
 `/srv/ops`. Non duplicare istruzioni negli adattatori né nelle memorie globali degli strumenti.
+
+## Diagnostica del server con Antigravity
+La sandbox isola rete e hostname: non usare i suoi ip/hostname per compilare host.conf. Richiedere l'esecuzione sul server reale, fuori dalla sandbox, delle sole operazioni preautorizzate `/usr/local/bin/ops-host-check --rileva` e `/usr/local/bin/ops-host-check --piano`. Sono diagnostica senza sudo, file di root con operazioni fisse; i permessi command evitano ulteriori approvazioni. Usare il rilevamento per compilare host.conf nel workspace. Non cambiare HOST in sandbox. Se il diagnostico riporta namespace isolato, non insistere dentro la sandbox. Non leggere Netplan con sudo: DHCP e route si ricavano dallo stato reale; modifiche alla rete restano del proprietario. Non chiedere accesso generale alla home o autorizzazione per tutti i comandi ip.

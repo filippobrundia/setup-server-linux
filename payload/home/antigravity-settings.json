@@ -11,7 +11,9 @@
       "command(regex:journalctl( .*)?)",
       "command(regex:git (-C /srv/ops )?(add|commit|status|diff|log)( .*)?)",
       "write_file(/srv/ops)",
-      "read_file(/etc/fstab)"
+      "read_file(/etc/fstab)",
+      "command(/usr/local/bin/ops-host-check --rileva)",
+      "command(/usr/local/bin/ops-host-check --piano)"
     ],
     "deny": [
       "command(sudo *)"

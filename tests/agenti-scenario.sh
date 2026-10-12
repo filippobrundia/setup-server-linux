@@ -321,3 +321,11 @@ rm -rf $AG
 # Regressioni del collaudo reale Antigravity, 2026-10-11.
 t "A29 regole Antigravity valide, workspace scrivibile e fstab leggibile" jq -e '.enableTerminalSandbox == true and (.permissions.allow | index("write_file(/srv/ops)")) and (.permissions.allow | index("read_file(/etc/fstab)")) and (.permissions.deny | index("command(sudo *)")) and ([.permissions.allow[], .permissions.deny[]] | all(startswith("unsandboxed(") | not))' $TH/.gemini/antigravity-cli/settings.json
 t "A29 timeout Antigravity resta nel gruppo del terminale e forza arresto" grep -Fq 'timeout --foreground --kill-after=10s 300 "$AGY"' /srv/ops/bin/cli-update
+
+# Il diagnostico non accetta installazione, shell, sudo o argomenti extra.
+t "A30 diagnostico host root non modificabile dall'amministratore" bash -c '[ "$(stat -c "%U %a" /usr/local/bin/ops-host-check)" = "root 755" ] && [ "$(stat -c "%U %a" /usr/local/lib/ops-bootstrap/rileva-parametri.sh)" = "root 644" ]'
+for op in --scrivi --rollback bash; do
+  tn "A30 diagnostico rifiuta $op" runuser -u tester -- /usr/local/bin/ops-host-check "$op"
+done
+tn "A30 diagnostico rifiuta argomenti aggiuntivi" runuser -u tester -- /usr/local/bin/ops-host-check --piano extra
+t "A30 regole permettono soltanto rilevamento e piano diagnostici" jq -e '(.permissions.allow | index("command(/usr/local/bin/ops-host-check --rileva)")) and (.permissions.allow | index("command(/usr/local/bin/ops-host-check --piano)")) and ([.permissions.allow[]] | all(. != "command(ip)" and . != "command(/usr/local/sbin/ops-installa)"))' $TH/.gemini/antigravity-cli/settings.json

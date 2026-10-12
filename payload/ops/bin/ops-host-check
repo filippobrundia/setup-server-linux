@@ -1,0 +1,14 @@
+#!/bin/bash
+# ops-host-check — diagnostica host gestita da setup-server-linux, SENZA sudo.
+# Installato root:root in /usr/local/bin; ammette soltanto --rileva e --piano.
+set -euo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C.UTF-8
+[ "$(id -u)" != 0 ] || { echo "Diagnostica da eseguire senza sudo" >&2; exit 2; }
+[ "$#" = 1 ] || { echo "Uso: ops-host-check --rileva|--piano" >&2; exit 2; }
+case $1 in --rileva|--piano) ;; *) echo "Operazione non ammessa" >&2; exit 2 ;; esac
+real=$(head -n1 /etc/hostname); real=${real%%.*}
+[ "$(hostname -s)" = "$real" ] || { echo "Namespace isolato: eseguire ops-host-check sul server reale tramite il permesso command autorizzato, non dentro la sandbox" >&2; exit 3; }
+case $1 in
+  --rileva) exec env -i HOME="$HOME" PATH="$PATH" LC_ALL=C.UTF-8 /bin/bash --noprofile --norc /usr/local/lib/ops-bootstrap/rileva-parametri.sh ;;
+  --piano) exec env -i HOME="$HOME" PATH="$PATH" LC_ALL=C.UTF-8 /usr/local/sbin/ops-installa --piano ;;
+esac

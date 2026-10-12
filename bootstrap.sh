@@ -56,7 +56,7 @@ SANDBOX_PKGS="bubblewrap socat apparmor"
 AGY=/opt/ops-agenti/antigravity/agy
 BWRAP_PROFILE=/etc/apparmor.d/ops-bwrap
 # blocchi ~/.bash_aliases delle versioni precedenti (0.1.0–0.6.0): sostituiti senza conflitto
-OLD_BLOCKS="f479cdbe7662d584c3c4877814223315c5ab6d490dab97e34a11ba4b47a9a458"
+OLD_BLOCKS="c0304d4d9f830ef5b336f53176ff35e27f00f1039da199f3adaaf17ea06fe42a f479cdbe7662d584c3c4877814223315c5ab6d490dab97e34a11ba4b47a9a458"
 GITHUB_ED25519_FPR=SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU   # pubblicata da GitHub (api.github.com/meta)
 
 ADMIN=${SUDO_USER:-}; OWNER=""; CHECK=0; KBONLY=0; KB_REMOTE=""; KB_ID=""; NO_KB=0; AGENTE=""
@@ -291,6 +291,7 @@ for u in ops-maint-window.timer ops-cli-update.timer; do
   if [ -d /run/systemd/system ] && systemctl is-enabled --quiet "$u" 2>/dev/null; then plan "nota: $u è già abilitato (lasciato com'è)"; fi
 done
 # --- Comando unico della configurazione iniziale ---
+if [ -e /usr/local/bin/ops-host-check ] && ! head -n 2 /usr/local/bin/ops-host-check | grep -q 'ops-host-check.*setup-server-linux'; then conflict "ops-host-check esistente non del pacchetto"; fi
 if [ -e "$INSTALLA" ] && ! head -n 4 "$INSTALLA" | grep -q 'ops-installa'; then conflict "$INSTALLA esiste e non è del pacchetto"; fi
 if [ -e "$REFDIR" ]; then
   [ -d "$REFDIR" ] && [ ! -L "$REFDIR" ] && [ "$(stat -c '%U:%G %a' "$REFDIR")" = "root:root 700" ] || conflict "$REFDIR esiste e non è una cartella root 0700"
@@ -515,7 +516,7 @@ as_admin install -d -m 0700 "$AHOME/.codex" "$AHOME/.codex/rules"
 cmp -s "$CXR" "$PKG/payload/home/codex-ops.rules" || { install -o "$ADMIN" -g "$ADMIN" -m 0644 "$PKG/payload/home/codex-ops.rules" "$CXR"; log "  regole di Codex: $CXR"; }
 merge_json "$AGS" "$PKG/payload/home/antigravity-settings.json" 0600
 # Migra le regole obsolete e rende scrivibile soltanto il workspace amministrativo.
-jq '.permissions.allow = (((.permissions.allow // []) | map(sub("^unsandboxed\\("; "command("))) + ["write_file(/srv/ops)", "read_file(/etc/fstab)"] | unique) | .permissions.deny = (((.permissions.deny // []) | map(sub("^unsandboxed\\("; "command("))) + ["command(sudo *)"] | unique)' "$AGS" > "$STAGE/agy-current.json"
+jq --arg home "$AHOME" '.permissions.allow = (((.permissions.allow // []) | map(sub("^unsandboxed\\("; "command("))) + ["write_file(/srv/ops)", "read_file(/etc/fstab)", "command(/usr/local/bin/ops-host-check --rileva)", "command(/usr/local/bin/ops-host-check --piano)", ("read_file(" + $home + "/.bash_aliases)")] | unique) | .permissions.deny = (((.permissions.deny // []) | map(sub("^unsandboxed\\("; "command("))) + ["command(sudo *)"] | unique)' "$AGS" > "$STAGE/agy-current.json"
 if ! cmp -s <(jq -S . "$AGS") <(jq -S . "$STAGE/agy-current.json"); then
   cp -p "$AGS" "$AGS.bak-$TS"
   install -o "$ADMIN" -g "$ADMIN" -m 0600 "$STAGE/agy-current.json" "$AGS"
@@ -557,6 +558,11 @@ if ! cmp -s "$STAGE/ops/docs/bootstrap/ops-installa" "$INSTALLA"; then
   install -d -m 0755 "$(dirname "$INSTALLA")"
   install -o root -g root -m 0755 "$STAGE/ops/docs/bootstrap/ops-installa" "$INSTALLA"; log "  installato: $INSTALLA"
 fi
+
+# Diagnostica senza privilegi: file root, operazioni fisse; non abilita sudo o installer arbitrario.
+install -d -o root -g root -m 0755 /usr/local/lib/ops-bootstrap /usr/local/bin
+install -o root -g root -m 0755 "$STAGE/ops/bin/ops-host-check" /usr/local/bin/ops-host-check
+install -o root -g root -m 0644 "$STAGE/ops/docs/bootstrap/rileva-parametri.sh" /usr/local/lib/ops-bootstrap/rileva-parametri.sh
 
 # ============================================================== VERIFY
 log "== VERIFY"

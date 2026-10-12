@@ -3,6 +3,7 @@
 # la shell resta nella directory di partenza. Binario originale: command claude|codex|gemini
 # Scelta dell'agente della sessione, login e collaudo: agente (stesso stato del server per tutti gli agenti).
 case ":$PATH:" in *":$HOME/.npm-global/bin:"*) ;; *) PATH="$HOME/.npm-global/bin:$PATH" ;; esac
+case ":$PATH:" in *":/usr/local/sbin:"*) ;; *) PATH="/usr/local/sbin:$PATH" ;; esac
 unalias claude codex gemini agy agente 2>/dev/null
 claude() { ( cd /srv/ops && command claude "$@" ); }
 codex()  { ( cd /srv/ops && command codex "$@" ); }
