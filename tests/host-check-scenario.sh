@@ -8,6 +8,7 @@ install -m755 /pkg/payload/ops/bin/ops-host-check /usr/local/bin/ops-host-check
 install -m644 /pkg/payload/ops/docs/bootstrap/rileva-parametri.sh /usr/local/lib/ops-bootstrap/rileva-parametri.sh
 install -m755 /pkg/payload/ops/docs/bootstrap/ops-installa /usr/local/sbin/ops-installa
 cp /pkg/payload/ops/docs/bootstrap/passi-comune.sh /srv/ops/docs/bootstrap/
+cp /pkg/payload/ops/docs/bootstrap/passi-comune.sh /usr/local/lib/ops-bootstrap/
 cp /pkg/payload/ops/host.conf.tmpl /srv/ops/host.conf
 sed -i "s/@@HOST@@/$(hostname -s)/g;s/@@ADMIN@@/tester/g;s/@@OWNER@@/Tester/g;s/^LAN_CIDR=.*/LAN_CIDR=\"172.17.0.0\/16\"/;s/^DATA_MOUNT=.*/DATA_MOUNT=\"\/srv\"/;s/^PROFILO=.*/PROFILO=\"docker\"/;s/^ESCLUSIONI=.*/ESCLUSIONI=\"7.1 10.3 11.2 12.8\"/;s/^AGENTE=.*/AGENTE=\"agy\"/" /srv/ops/host.conf
 sed -i 's/^SERVICES=.*/SERVICES="ssh cron ufw fail2ban docker"/' /srv/ops/host.conf
@@ -27,5 +28,9 @@ runuser -u tester -- /usr/local/bin/ops-host-check --rileva >/dev/null
 shellcheck /pkg/payload/ops/bin/ops-host-check
 jq -e '(.permissions.allow | index("command(/usr/local/bin/ops-host-check --rileva)")) and (.permissions.allow | index("command(/usr/local/bin/ops-host-check --piano)")) and (.permissions.deny | index("command(sudo *)"))' /pkg/payload/home/antigravity-settings.json >/dev/null
 # Il blocco della precedente 0.7.0 deve essere riconosciuto per l'aggiornamento.
+printf '\ntouch /tmp/ops-plan-untrusted-probe\n' >> /srv/ops/docs/bootstrap/passi-comune.sh
+runuser -u tester -- /usr/local/bin/ops-host-check --piano >/tmp/piano-protetto.out
+[ ! -e /tmp/ops-plan-untrusted-probe ]
+echo 'PASS piano: libreria del workspace modificata non eseguita'
 printf 'HOST_CHECK_TEST_OK\n'
 

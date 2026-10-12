@@ -291,6 +291,7 @@ t "host.conf ripristinato, repository pulito" bash -c "[ -z \"\$(runuser -u test
 # agenti di amministrazione 0.7.0: quattro installati, agente della sessione, sandbox, comando agente (A1–A28)
 . "$PKG/tests/agenti-scenario.sh"
 
+apt-get install -y -qq shellcheck >/dev/null 2>&1
 if bash "$PKG/tests/configura-server-scenario.sh" > /tmp/configura-server-full.log 2>&1; then
   pass "orchestratore comune: quattro agenti, errore, attesa e ripresa (modello e sudo simulati)"
 else

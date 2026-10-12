@@ -21,3 +21,6 @@ La regressione completa include casi dell'installer reale con piano dichiarato e
 ## Limiti e produzione
 Esclusi nel laboratorio rete statica, copia remota, Healthchecks e attivazione manutenzione. Gate e manutenzione restano bloccati dalla copia remota assente. Il successo del cron KB reale, alcune prove di robustezza e il login Gemini API restano non dimostrati. Il programma di configurazione non abilita spese e non elimina questi limiti.
 Nessun bootstrap eseguito sul N100. Nessuna release ufficiale pubblicata durante questa correzione.
+
+## Esito della regressione e controllo mirato
+Le due suite complete su Ubuntu 24.04 e 26.04 hanno passato 327 controlli su 328; l'ultimo ha eseguito tutti i casi del flusso con successo e poi fallito per shellcheck non ancora installato nel banco. Corretto l'ordine del banco, il controllo viene ripetuto separatamente. Nessun esito 327/328 viene presentato come 328/328 della suite originale. Il piano installato usa ora una libreria di root, non il file modificabile nel workspace; il test di manomissione verifica che il file del workspace non venga eseguito. I punti di ingresso mantengono stdin collegato al terminale anche se install.sh viene avviato da una pipe.

@@ -451,7 +451,12 @@ if [ "$MODE" = piano ]; then   # sola lettura, SENZA sudo: parametri dal file di
   # come root si includerebbe passi-comune.sh di /srv/ops senza verificarlo: --piano solo come amministratore
   [ "$(id -u)" != 0 ] || { say "--piano va eseguito senza sudo, come amministratore" >&2; exit 2; }
   RUNDIR=""
-  OPS_DIR=$OPS load_params "$OPS/docs/bootstrap/passi-comune.sh"
+  PLAN_LIB=$OPS/docs/bootstrap/passi-comune.sh
+  if [ "$SELF" = /usr/local/sbin/ops-installa ]; then
+    PLAN_LIB=/usr/local/lib/ops-bootstrap/passi-comune.sh
+    [ -f "$PLAN_LIB" ] && [ ! -L "$PLAN_LIB" ] && [ "$(stat -c '%U:%G %a' "$PLAN_LIB")" = 'root:root 644' ] || stop "libreria del piano non protetta: rieseguire bootstrap"
+  fi
+  OPS_DIR=$OPS load_params "$PLAN_LIB"
   print_plan
   if [ "${#PROBLEMI[@]}" -gt 0 ]; then say "Parametri da completare in $OPS/host.conf prima di iniziare:"; printf '  - %s\n' "${PROBLEMI[@]}"; exit 3; fi
   say "Parametri completi: il proprietario può lanciare, da una sessione SSH:  sudo ops-installa"

@@ -565,6 +565,7 @@ install -d -o root -g root -m 0755 /usr/local/lib/ops-bootstrap /usr/local/bin
 install -o root -g root -m 0755 "$STAGE/ops/bin/ops-host-check" /usr/local/bin/ops-host-check
 install -o root -g root -m 0755 "$STAGE/ops/bin/configura-server" /usr/local/bin/configura-server
 install -o root -g root -m 0644 "$STAGE/ops/docs/bootstrap/rileva-parametri.sh" /usr/local/lib/ops-bootstrap/rileva-parametri.sh
+install -o root -g root -m 0644 "$STAGE/ops/docs/bootstrap/passi-comune.sh" /usr/local/lib/ops-bootstrap/passi-comune.sh
 
 [ "$(stat -c '%U:%G %a' /usr/local/bin/ops-host-check)" = "root:root 755" ] && cmp -s "$STAGE/ops/bin/ops-host-check" /usr/local/bin/ops-host-check || die "diagnostico host non conforme"
 [ "$(stat -c '%U:%G %a' /usr/local/lib/ops-bootstrap/rileva-parametri.sh)" = "root:root 644" ] && cmp -s "$STAGE/ops/docs/bootstrap/rileva-parametri.sh" /usr/local/lib/ops-bootstrap/rileva-parametri.sh || die "rilevamento host non conforme"

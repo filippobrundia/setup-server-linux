@@ -15,4 +15,4 @@ while [ $# -gt 0 ]; do
 done
 sudo /bin/bash "$DIR/bootstrap.sh" --admin "$(id -un)" "${BOOT[@]}"
 [ "$CHECK" = 0 ] || exit 0
-exec /usr/local/bin/configura-server "${CONF[@]}"
+exec /usr/local/bin/configura-server "${CONF[@]}" < /dev/tty
