@@ -209,6 +209,9 @@ out=$(runuser -u agtest -- env "${AGV[@]}" $AGC --stato 2>&1)
 [ "$(grep -cE 'Claude Code|Codex CLI|Antigravity CLI|Gemini CLI' <<<"$out")" = 4 ] && grep -q '← sessione' <<<"$out" && pass "A21c agente --stato: quattro agenti, nessuna modifica" || { bad "A21c"; echo "$out"; }
 
 : > $AG/vuoto; chmod 0644 $AG/vuoto
+out=$(runuser -u agtest -- env "${AGV[@]}" AGENTE_TTY=$AG/vuoto $AGC --prepara codex 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q 'codex: verifica OK' <<<"$out" && ! grep -q SESSIONE <<<"$out" && pass "A21 preparazione agente senza aprire la chat" || { bad "A21 prepara (rc=$rc)"; echo "$out"; }
+
 rc=$(runuser -u agtest -- env "${AGV[@]}" AGENTE_TTY=$AG/vuoto timeout 60 $AGC > $AG/out 2>&1; echo $?)
 [ "$rc" = 2 ] && grep -q 'nessuna risposta' $AG/out && pass "A21d input terminato: agente esce (esito 2), nessun ciclo senza fine" || { bad "A21d (rc=$rc)"; tail -3 $AG/out; }
 

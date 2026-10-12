@@ -130,7 +130,7 @@ if [ "$KBONLY" = 1 ] && [ ! -f "$OPS/.bootstrap/manifest" ]; then
   die "--knowledge-base-only richiede una /srv/ops già preparata da questo pacchetto"
 fi
 
-for f in payload/ops/bin/ops-host-check payload/ops/AGENTS.md.tmpl payload/ops/maint/install-maint payload/ops/maint/ops-maint payload/home/bash_aliases.block; do
+for f in payload/ops/bin/configura-server payload/ops/bin/ops-host-check payload/ops/AGENTS.md.tmpl payload/ops/maint/install-maint payload/ops/maint/ops-maint payload/home/bash_aliases.block; do
   [ -f "$PKG/$f" ] || die "pacchetto incompleto: manca $f"
 done
 for f in "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/ops-agy" "$PKG/payload/ops/maint/install-maint" "$PKG"/payload/ops/docs/bootstrap/*.sh "$PKG/payload/ops/docs/bootstrap/ops-installa"; do
@@ -291,6 +291,7 @@ for u in ops-maint-window.timer ops-cli-update.timer; do
   if [ -d /run/systemd/system ] && systemctl is-enabled --quiet "$u" 2>/dev/null; then plan "nota: $u è già abilitato (lasciato com'è)"; fi
 done
 # --- Comando unico della configurazione iniziale ---
+if [ -e /usr/local/bin/configura-server ] && ! head -n 2 /usr/local/bin/configura-server | grep -q 'configura-server.*setup-server-linux'; then conflict "configura-server esistente non del pacchetto"; fi
 if [ -e /usr/local/bin/ops-host-check ] && ! head -n 2 /usr/local/bin/ops-host-check | grep -q 'ops-host-check.*setup-server-linux'; then conflict "ops-host-check esistente non del pacchetto"; fi
 if [ -e "$INSTALLA" ] && ! head -n 4 "$INSTALLA" | grep -q 'ops-installa'; then conflict "$INSTALLA esiste e non è del pacchetto"; fi
 if [ -e "$REFDIR" ]; then
@@ -562,6 +563,7 @@ fi
 # Diagnostica senza privilegi: file root, operazioni fisse; non abilita sudo o installer arbitrario.
 install -d -o root -g root -m 0755 /usr/local/lib/ops-bootstrap /usr/local/bin
 install -o root -g root -m 0755 "$STAGE/ops/bin/ops-host-check" /usr/local/bin/ops-host-check
+install -o root -g root -m 0755 "$STAGE/ops/bin/configura-server" /usr/local/bin/configura-server
 install -o root -g root -m 0644 "$STAGE/ops/docs/bootstrap/rileva-parametri.sh" /usr/local/lib/ops-bootstrap/rileva-parametri.sh
 
 [ "$(stat -c '%U:%G %a' /usr/local/bin/ops-host-check)" = "root:root 755" ] && cmp -s "$STAGE/ops/bin/ops-host-check" /usr/local/bin/ops-host-check || die "diagnostico host non conforme"
@@ -633,7 +635,7 @@ prossimo() {
   if [ -n "$AGENTE" ]; then log "  agente della sessione: $(etichetta "$AGENTE"). Il comando guida il login personale SOLO di questo agente,"
   else log "  nessun agente scelto: il comando chiede con quale avviare la sessione, guida il login personale SOLO di quello,"; fi
   log "  esegue il collaudo operativo e lo avvia in /srv/ops; se non è utilizzabile permette di sceglierne un altro."
-  log "  Poi il prompt iniziale: l'agente rileva i parametri, chiede una sola volta i dati mancanti e indica il comando"
+  log "  Nessuna chat di configurazione: configura-server rileva i parametri e prepara il piano. Il comando"
   log "  unico da lanciare in una sessione SSH: sudo ops-installa"
 }
 if [ "$KB_STATE" = fallita ]; then

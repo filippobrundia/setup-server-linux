@@ -1,20 +1,14 @@
-# Guida unica — bootstrap 0.7.0
+# Guida unica — configurazione deterministica
 
-## Nuova macchina
-Da SSH come amministratore, scaricare install.sh dal tag v0.7.0 e lanciarlo con l'impronta completa riportata nella release. La guida esterna alla release contiene il comando su una riga.
-Il bootstrap installa Claude Code, Codex, Antigravity e Gemini con i prerequisiti. Chiede se collegare la KB, l'URL e il token di lettura nascosto. Poi chiede quale agente usare.
+Da una sessione SSH normale, come amministratore:
+- Pacchetto locale estratto: bash installa-server.sh --agente antigravity --profilo docker --esclusioni "7.1 10.3 11.2 12.8"
+- Percorso pubblico, dopo la pubblicazione: bash install.sh --sha256 IMPRONTA --agente antigravity --configura --profilo docker --esclusioni "7.1 10.3 11.2 12.8"
 
-## Agente
-Lanciare /srv/ops/bin/agente antigravity per account Google personale, codex per account ChatGPT, claude per account Anthropic, gemini per chiave API. Autenticare soltanto l'agente scelto. Gli altri non bloccano il collaudo per mancanza di login.
-La sandbox deve consentire scrittura in /srv/ops e negarla nella home. Non procedere se questa prova fallisce.
+Un comando prepara il bootstrap, collega eventualmente la KB, guida il login del solo agente scelto, rileva i dati dell'host, registra i parametri, esegue il piano, lancia ops-installa e salva il resoconto. Non aprire una conversazione AI per configurare la base.
 
-Prompt iniziale:
-Completa la configurazione iniziale seguendo AGENTS.md e la checklist. Rileva i dati reali, raccogli in una sola domanda quelli mancanti e il profilo desiderato, registra ogni esclusione, verifica ops-installa --piano e indicami il comando sudo ops-installa. Non dedurre il profilo base dalla sola assenza di container. Non cambiare i file del pacchetto o aggirare la sandbox. Leggi autonomamente i log e aggiorna la documentazione al termine.
+Interventi personali: credenziali KB e agente, password sudo (il numero dipende dalla durata della cache), conferma SI del piano, nuovo login SSH per il firewall, RIAVVIA per il riavvio, APPROVO per la manutenzione soltanto se inclusa e con prerequisiti soddisfatti.
+Dopo il riavvio o un errore: configura-server. I parametri sono conservati e i passi superati non vengono ripetuti. Il programma non aggira errori, controlli di integrita o blocchi della manutenzione.
 
-## Comando unico
-Nel terminale SSH reale: sudo ops-installa. Confermare con SI, aprire un nuovo login SSH per confermare il firewall, scrivere RIAVVIA al riavvio presidiato e rilanciare sudo ops-installa dopo l'avvio. I passi superati non vengono ripetuti. APPROVO serve soltanto per la finestra automatica quando i prerequisiti sono soddisfatti.
-Le correzioni del collaudo sono integrate: una nuova installazione non richiede --dichiara-correzione. Non accettare correzioni sconosciute per superare il controllo di integrità.
+Rapporto: /srv/ops/docs/bootstrap/esito-configurazione.md. Log reali: /var/log/ops-installa/. Dopo la configurazione, agente NOME apre la normale sessione amministrativa.
 
-## Esiti
-COMPLETATO CON ESCLUSIONI significa laboratorio concluso, validazione produzione incompleta. Se manca la copia remota, gate e manutenzione restano bloccati. COMPLETATO senza esclusioni richiede tutti i controlli superati.
-Prove e limiti: docs/bootstrap/chiusura-0.7.0.md. Per Gemini login e modello restano non provati; cron KB reale e prove di produzione restano nel backlog.
+Le esclusioni consentono il collaudo locale; non sono verifiche superate. Senza copia remota gate e manutenzione automatica restano bloccati. Gemini richiede API key; Antigravity usa login Google. Le quote e l'accesso del modello possono bloccare il suo collaudo: nessun servizio a pagamento viene attivato.

@@ -1,0 +1,83 @@
+#!/bin/bash
+# configura-server — orchestratore deterministico gestito da setup-server-linux.
+# Utente amministratore in SSH: login del solo agente, preparazione, sudo ops-installa e rapporto.
+# Nessun modello decide o esegue i passi di installazione.
+set -euo pipefail
+export PATH="$HOME/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" LC_ALL=C.UTF-8
+T=""
+SELF=$(readlink -f "$0")
+if [ -n "${OPS_CONFIG_TEST_ROOT:-}" ] && [ "$SELF" != /usr/local/bin/configura-server ]; then T=$OPS_CONFIG_TEST_ROOT; PATH="$T/fakebin:$PATH"; fi
+OPS=$T/srv/ops
+HC=$OPS/host.conf
+RILEVA=$T/usr/local/lib/ops-bootstrap/rileva-parametri.sh
+HOSTCHECK=$T/usr/local/bin/ops-host-check
+INSTALLA=$T/usr/local/sbin/ops-installa
+AGENTE_CMD=$OPS/bin/agente
+PROF=""; ESCL=""; ESCL_SET=0; PREPARA=0
+usage() { echo 'Uso: configura-server [--profilo base|docker] [--esclusioni "7.1 10.3 11.2 12.8"] [--prepara]'; }
+while [ $# -gt 0 ]; do
+ case $1 in
+  --profilo) [ $# -ge 2 ] || { usage; exit 2; }; PROF=$2; shift 2 ;;
+  --esclusioni) [ $# -ge 2 ] || { usage; exit 2; }; ESCL=$2; ESCL_SET=1; shift 2 ;;
+  --prepara) PREPARA=1; shift ;;
+  -h|--help) usage; exit 0 ;;
+  *) usage >&2; exit 2 ;;
+ esac
+done
+[ "$(id -u)" != 0 ] || { echo 'Lancia configura-server senza sudo: la password verra chiesta solo per ops-installa.' >&2; exit 2; }
+[ -f "$HC" ] && [ ! -L "$HC" ] || { echo 'host.conf assente o non regolare' >&2; exit 3; }
+hc() { python3 - "$HC" "$1" <<'PYHC'
+import re,sys
+value=''
+for line in open(sys.argv[1]):
+ m=re.match(r'^'+re.escape(sys.argv[2])+r'=(?:"([^"\n]*)"|([^\s#]+))',line)
+ if m:value=m[1] if m[1] is not None else m[2]
+print(value)
+PYHC
+}
+[ -n "$PROF" ] || PROF=$(hc PROFILO)
+OLDPROF=$(hc PROFILO)
+[ -z "$OLDPROF" ] || [ "$OLDPROF" = "$PROF" ] || { echo 'Profilo gia registrato: non cambiarlo durante la ripresa.' >&2; exit 3; }
+case $PROF in base|docker) ;; *) echo 'Serve il profilo: configura-server --profilo base|docker (piu eventuali esclusioni).' >&2; exit 3 ;; esac
+if [ "$ESCL_SET" = 0 ]; then ESCL=$(hc ESCLUSIONI); fi
+for e in $ESCL; do case $e in 2|7.1|10.3|11.2|12.8) ;; *) echo "Esclusione non ammessa: $e" >&2; exit 3 ;; esac; done
+if [[ " $ESCL " == *' 10.3 '* ]] && [[ " $ESCL " != *' 12.8 '* ]]; then echo '10.3 esclusa richiede anche 12.8 esclusa.' >&2; exit 3; fi
+# Blocco per l'intera preparazione: nessuna modifica contemporanea a parametri e decisioni.
+install -d -m 0700 "$HOME/.local/state/ops"
+exec 9>"$HOME/.local/state/ops/configura-server.lock"
+flock -n 9 || { echo 'Una configurazione e gia in corso.' >&2; exit 3; }
+"$HOSTCHECK" --rileva
+OPS_DIR="$OPS" /bin/bash "$RILEVA" --scrivi --profilo "$PROF" --esclusioni "$ESCL"
+DEC=$OPS/docs/decisions.md
+MARK="Configurazione deterministica: profilo=$PROF; esclusioni=$ESCL"
+if ! grep -Fq "$MARK" "$DEC"; then
+ printf '\n### %s — %s\nParametri rilevati sul server reale; disco e rete verificati dal piano. Le esclusioni restano da completare per la produzione. Copia remota mancante: gate e manutenzione automatica bloccati.\n' "$(date -u +%F)" "$MARK" >> "$DEC"
+fi
+git -C "$OPS" add host.conf docs/decisions.md
+if ! git -C "$OPS" diff --cached --quiet -- host.conf docs/decisions.md; then git -C "$OPS" commit -m 'Parametri della configurazione deterministica' -- host.conf docs/decisions.md; fi
+"$HOSTCHECK" --piano
+if [ "$PREPARA" = 1 ]; then echo 'Preparazione superata: nessun sudo e nessuna installazione eseguiti.'; exit 0; fi
+SEL=$(hc AGENTE)
+[ -n "$SEL" ] || { echo 'Scegliere prima l agente con agente --scegli NOME.' >&2; exit 3; }
+# Login e prova solo dell'agente scelto; non si apre una chat di configurazione.
+"$AGENTE_CMD" --prepara "$SEL"
+set +e
+sudo "$INSTALLA"
+rc=$?
+set -e
+if [ "$rc" = 5 ]; then
+ echo 'Attesa di conferma firewall o riavvio. Dopo il nuovo login rilancia configura-server: non ripete i passi completati.'
+ exit 5
+fi
+REPORT=$OPS/docs/bootstrap/esito-configurazione.md
+{
+ echo '# Esito della configurazione deterministica'
+ printf '\nData UTC: %s\nProfilo: %s\nEsclusioni: %s\nCodice reale installer: %s\n' "$(date -u +%FT%TZ)" "$PROF" "$ESCL" "$rc"
+ grep -m1 '^STATO:' "$OPS/docs/bootstrap/avanzamento.md" || true
+ echo; echo 'Log e stato: /var/log/ops-installa/. Le esclusioni non sono prove superate.'
+ echo; "$OPS/bin/quick-check" || true
+} > "$REPORT"
+git -C "$OPS" add docs/bootstrap/esito-configurazione.md
+git -C "$OPS" diff --cached --quiet -- docs/bootstrap/esito-configurazione.md || git -C "$OPS" commit -m 'Esito della configurazione deterministica' -- docs/bootstrap/esito-configurazione.md
+cat "$REPORT"
+exit "$rc"

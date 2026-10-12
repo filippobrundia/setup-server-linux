@@ -15,9 +15,7 @@ hardware, versione di Ubuntu, ruolo della macchina, accesso da Internet e rete a
 
 **Configurazione iniziale.** Se `docs/bootstrap/avanzamento.md` contiene la riga `STATO: IN CORSO`, la macchina
 non ha ancora completato la base: segui "Esecuzione unica" in `docs/bootstrap/configurazione-server-base.md`.
-In breve: `/usr/local/bin/ops-host-check --rileva` (con Antigravity sul server reale fuori sandbox), **una sola** richiesta a @@OWNER@@ dei dati mancanti (profilo, esclusioni, copia remota, monitoraggio), `host.conf` compilato con commit, `/usr/local/bin/ops-host-check --piano` pulito; poi
-@@OWNER@@ lancia da una sessione SSH `sudo ops-installa` (una password per esecuzione) e tu leggi gli esiti in
-`/var/log/ops-installa/` (senza sudo, senza fargli copiare output). `ops-installa` aggiorna l'avanzamento da solo.
+La configurazione iniziale e ora deterministica e indipendente dal modello: @@OWNER@@ esegue `configura-server --profilo base|docker --esclusioni "..."` nel terminale SSH reale. Il programma rileva i dati, compila e registra i parametri, verifica il piano, guida il login dell'agente scelto senza aprire una chat, invoca sudo ops-installa e salva il rapporto. Non reinventare i controlli e non proporre approvazioni una per una. Il modello non esegue sudo e non deve chiedere accessi diagnostici per questa procedura. Dopo un riavvio si rilancia configura-server, che riprende dallo stato persistente. Rapporti in docs/bootstrap/esito-configurazione.md e log in /var/log/ops-installa/.
 Con esclusioni l'esito è "collaudo locale completato con esclusioni", **non** la validazione per produzione. Gli avvisi di
 `quick-check` sulle parti non ancora configurate sono attesi. Si passa alla gestione ordinaria solo quando il
 collaudo finale (sezione 12) è superato e il file riporta `STATO: COMPLETATO`.

@@ -291,6 +291,8 @@ t "host.conf ripristinato, repository pulito" bash -c "[ -z \"\$(runuser -u test
 # agenti di amministrazione 0.7.0: quattro installati, agente della sessione, sandbox, comando agente (A1–A28)
 . "$PKG/tests/agenti-scenario.sh"
 
+t "orchestratore comune: quattro agenti, errore, attesa e ripresa (modello e sudo simulati)" bash "$PKG/tests/configura-server-scenario.sh"
+
 echo "== T11 analisi statica (shellcheck -S warning)"
 apt-get install -y -qq shellcheck >/dev/null 2>&1
 for f in "$PKG/bootstrap.sh" "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/ops-agy" "$PKG/payload/ops/maint/install-maint" "$PKG"/payload/ops/docs/bootstrap/*.sh "$PKG/payload/ops/docs/bootstrap/ops-installa"; do

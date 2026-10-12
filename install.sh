@@ -18,8 +18,11 @@ BASE=https://github.com/$REPO/releases/download/v$VERSION
 
 die() { echo "STOP: $*" >&2; exit 3; }
 WANT=""; ARGS=()
+CONFIGURA=0; CONFARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
+    --configura) CONFIGURA=1; shift ;;
+    --profilo|--esclusioni) [ $# -ge 2 ] || die "manca il valore di $1"; CONFARGS+=("$1" "$2"); shift 2 ;;
     --sha256) WANT=${2:-}; shift 2 ;;
     --check)  ARGS+=(--check); shift ;;
     --owner)  ARGS+=(--owner "${2:-}"); shift 2 ;;
@@ -30,6 +33,11 @@ while [ $# -gt 0 ]; do
     *) die "opzione sconosciuta: $1" ;;
   esac
 done
+
+if [ "$CONFIGURA" = 0 ] && [ "${#CONFARGS[@]}" -gt 0 ]; then die "--profilo e --esclusioni richiedono --configura"; fi
+if [ "$CONFIGURA" = 1 ]; then
+  for a in "${ARGS[@]}"; do case $a in --check|--knowledge-base-only) die "--configura non si combina con $a" ;; esac; done
+fi
 
 [ "$(id -u)" != 0 ] || die "eseguire come utente amministratore normale, non come root (gli agenti vanno installati nel suo account)"
 ME=$(id -un)
@@ -66,5 +74,11 @@ else
 fi
 
 echo "== avvio: sudo $DEST/bootstrap.sh --admin $ME ${ARGS[*]:-}"
-if [ -r /dev/tty ]; then exec sudo "$DEST/bootstrap.sh" --admin "$ME" "${ARGS[@]}" < /dev/tty
-else exec sudo "$DEST/bootstrap.sh" --admin "$ME" "${ARGS[@]}"; fi
+if [ "$CONFIGURA" = 1 ]; then
+  for a in "${ARGS[@]}"; do case $a in --check|--knowledge-base-only) die "--configura non si combina con $a" ;; esac; done
+  sudo "$DEST/bootstrap.sh" --admin "$ME" "${ARGS[@]}" < /dev/tty
+  exec /usr/local/bin/configura-server "${CONFARGS[@]}"
+else
+  if [ -r /dev/tty ]; then exec sudo "$DEST/bootstrap.sh" --admin "$ME" "${ARGS[@]}" < /dev/tty
+  else exec sudo "$DEST/bootstrap.sh" --admin "$ME" "${ARGS[@]}"; fi
+fi
