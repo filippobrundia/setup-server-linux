@@ -36,7 +36,9 @@ printf '/ 1000000000\n'
 EOF
 cat > "$C/fakebin/sudo" <<'EOF'
 #!/bin/bash
-[ "$#" = 1 ] && [ "$1" = "$CT/usr/local/sbin/ops-installa" ] || exit 90
+[ "$#" = 3 ] && [ "$1" = "$CT/usr/local/sbin/ops-installa" ] && [ "$2" = --parametri-sha256 ] || exit 90
+expected=$(sha256sum "$CT/srv/ops/host.conf"); expected=${expected%% *}
+[ "$3" = "$expected" ] || exit 91
 echo SUDO_INSTALLER >> "$CT/trace"
 exit "${SIM_RC:-0}"
 EOF

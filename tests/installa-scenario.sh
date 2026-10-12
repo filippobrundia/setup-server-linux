@@ -355,4 +355,18 @@ f=$(ls $IT/var/log/ops-installa/ultimo/*-9.log | tail -1)
 [ "$rc" = 5 ] && grep -qE '^9 fatto ' $IT/var/lib/ops-bootstrap/installa.state && grep -q 'codice di uscita: 0' "$f" && grep -q 'ops-postboot.service' "$f" \
   && grep -q 'REQUIRED_UNITS già al valore previsto' $(ls $IT/var/log/ops-installa/ultimo/*-9-dry-run.log) && grep -q '^passo10-backup.sh --dry-run' $IT/calls \
   && pass "D1 corretto: passo 9 reale dalla copia 0600 con esito 0 (install-maint status stampato), ripresa senza ripetere 1–8" || { bad "D1 corretto (rc=$rc)"; tail -8 "$f"; tail -5 $IT/out.txt; }
+# Piano dichiarato: impronta corretta evita SI; cambiamenti fermano ogni passo.
+state0; : > $IT/calls
+paramsha=$(sha256sum "$HC" | cut -d' ' -f1)
+rc=$(oi '\n' --parametri-sha256 "$paramsha")
+[ "$rc" = 5 ] && grep -q 'impronta dei parametri verificata' $IT/out.txt && ! grep -q 'Scrivi SI per procedere' $IT/out.txt && pass "piano dichiarato: nessun SI ordinario, stessi controlli e attesa riavvio" || { bad "piano dichiarato (rc=$rc)"; tail -8 $IT/out.txt; }
+state0; : > $IT/calls
+paramsha=$(sha256sum "$HC" | cut -d' ' -f1)
+cp -p "$HC" /tmp/hc-sha.salvato
+printf '\n# cambiato dopo preparazione\n' >> "$HC"
+rc=$(oi '\n' --parametri-sha256 "$paramsha")
+[ "$rc" = 3 ] && grep -q 'parametri cambiati dopo' $IT/out.txt && [ ! -s $IT/calls ] && pass "parametri modificati: nessun passo parte" || { bad "impronta parametri (rc=$rc)"; tail -8 $IT/out.txt; }
+cp -p /tmp/hc-sha.salvato "$HC"; rm -f /tmp/hc-sha.salvato
+rc=$(oi '\n' --parametri-sha256 nonvalida)
+[ "$rc" = 2 ] && pass "impronta parametri non valida rifiutata" || bad "impronta non valida (rc=$rc)"
 cp -p /tmp/ops-maint.conf.d1 /etc/ops-maint.conf; rm -f /etc/ops-maint.conf.bak-* /tmp/passo9-050.sh; rm -rf $IT /tmp/it-dati

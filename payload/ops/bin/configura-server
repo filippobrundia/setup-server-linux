@@ -59,10 +59,11 @@ if ! git -C "$OPS" diff --cached --quiet -- host.conf docs/decisions.md; then gi
 if [ "$PREPARA" = 1 ]; then echo 'Preparazione superata: nessun sudo e nessuna installazione eseguiti.'; exit 0; fi
 SEL=$(hc AGENTE)
 [ -n "$SEL" ] || { echo 'Scegliere prima l agente con agente --scegli NOME.' >&2; exit 3; }
+PARAM_SHA=$(sha256sum "$HC"); PARAM_SHA=${PARAM_SHA%% *}
 # Login e prova solo dell'agente scelto; non si apre una chat di configurazione.
 "$AGENTE_CMD" --prepara "$SEL"
 set +e
-sudo "$INSTALLA"
+sudo "$INSTALLA" --parametri-sha256 "$PARAM_SHA"
 rc=$?
 set -e
 if [ "$rc" = 5 ]; then

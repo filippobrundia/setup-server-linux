@@ -436,9 +436,10 @@ finish_summary() {
 }
 
 # ================================================================== comandi
-MODE=run; ARG=""
+MODE=run; ARG=""; PARAM_SHA=""
 case "${1:-}" in
   "") ;;
+  --parametri-sha256) PARAM_SHA=${2:-}; [[ "$PARAM_SHA" =~ ^[0-9a-f]{64}$ ]] && [ "$#" = 2 ] || { say "impronta parametri non valida" >&2; exit 2; } ;;
   --piano|--stato) MODE=piano ;;
   --rollback) MODE=rollback; ARG=${2:-} ;;
   --dichiara-correzione) MODE=correzione; ARG=${2:-} ;;
@@ -521,11 +522,16 @@ fi
 HM=$(date -u +%H%M); [ -z "$T" ] || HM=${OPS_INSTALLA_TEST_HM:-1200}
 if [ "$HM" -ge 0300 ] && [ "$HM" -lt 0410 ]; then stop "03:00–04:10 UTC: finestra del backup notturno, rilanciare dopo"; fi
 if [ "${HM:0:2}" = 06 ]; then stop "06:00–07:00 UTC: aggiornamenti automatici, rilanciare dopo le 07:00 UTC"; fi
+if [ -n "$PARAM_SHA" ] && [ "$(sha "$OPS/host.conf")" != "$PARAM_SHA" ]; then stop "parametri cambiati dopo la preparazione: nessun passo eseguito"; fi
 print_plan | tee -a "$RUNDIR/riepilogo.log"
 ph=$(plan_hash)
 if [ "$(st_meta piano)" != "$ph" ]; then
-  ask "Piano, profilo ed esclusioni sono corretti? Scrivi SI per procedere: "
-  [ "$REPLY_TXT" = SI ] || stop "piano non confermato (serve un terminale vero: sessione SSH dell'amministratore)"
+  if [ -n "$PARAM_SHA" ]; then
+    say "Piano dichiarato dal comando configura-server; impronta dei parametri verificata."
+  else
+    ask "Piano, profilo ed esclusioni sono corretti? Scrivi SI per procedere: "
+    [ "$REPLY_TXT" = SI ] || stop "piano non confermato (serve un terminale vero: sessione SSH dell'amministratore)"
+  fi
   st_meta_set piano "$ph"
 fi
 st_set 0 fatto "parametri completi (profilo $PROFILO)"
