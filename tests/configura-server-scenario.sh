@@ -24,6 +24,9 @@ esac
 EOF
 cat > "$C/srv/ops/bin/agente" <<'EOF'
 #!/bin/bash
+if [ "$#" = 1 ]; then
+ case $1 in claude|codex|agy|gemini) printf 'LAUNCH %s\n' "$1" >> "$CT/trace"; exit 0 ;; esac
+fi
 [ "$1" = --prepara ] && [ "$#" = 2 ] || exit 2
 printf 'LOGIN %s\n' "$2" >> "$CT/trace"
 exit "${SIM_LOGIN_RC:-0}"
@@ -76,6 +79,16 @@ check_rc 3 --esclusioni '10.3'
 check_rc 2 --comando-arbitrario
 if /bin/bash "$PKG/payload/ops/bin/configura-server" --profilo docker >/dev/null 2>&1; then exit 1; fi
 echo 'PASS cambio profilo, esclusioni incompatibili, argomenti arbitrari e root rifiutati'
+# Terminale reale simulato: solo una scelta esplicita apre una chat, dopo installer.
+: > "$C/trace"; chown "$U:$U" "$C/trace"
+printf 'codex\n' | script -q -e -c "runuser -u $U -- env CT=$C OPS_CONFIG_TEST_ROOT=$C /bin/bash $PKG/payload/ops/bin/configura-server" /dev/null > "$C/menu-out" 2>&1
+[ "$(grep -c '^SUDO_INSTALLER$' "$C/trace")" = 1 ]
+[ "$(tail -n 1 "$C/trace")" = 'LAUNCH codex' ]
+echo 'PASS scelta finale Codex dopo installer, senza seconda installazione'
+: > "$C/trace"; chown "$U:$U" "$C/trace"
+printf '\n' | script -q -e -c "runuser -u $U -- env CT=$C OPS_CONFIG_TEST_ROOT=$C /bin/bash $PKG/payload/ops/bin/configura-server" /dev/null > "$C/menu-out" 2>&1
+! grep -q LAUNCH "$C/trace"
+echo 'PASS termine senza chat: nessun agente avviato implicitamente'
 shellcheck -S warning "$PKG/payload/ops/bin/configura-server" "$PKG/installa-server.sh" "$PKG/install.sh"
 echo 'CONFIGURA_SERVER_TEST_OK'
 

@@ -91,4 +91,26 @@ git -C "$OPS" add STATUS.md CHANGELOG.md
 git -C "$OPS" add docs/bootstrap/esito-configurazione.md
 git -C "$OPS" diff --cached --quiet -- docs/bootstrap/esito-configurazione.md || git -C "$OPS" commit -m 'Esito della configurazione deterministica' -- docs/bootstrap/esito-configurazione.md STATUS.md CHANGELOG.md
 cat "$REPORT"
+# La scelta avviene solo dopo un setup riuscito e dal terminale personale.
+# Nessun avvio di chat implicito nelle riprese senza terminale o nei test.
+if [ "$rc" = 0 ] && [ -t 0 ]; then
+ echo
+ echo 'Configurazione conclusa. Quale agente vuoi aprire per amministrare il server?'
+ echo '  1) Antigravity   2) Codex   3) Claude   4) Gemini CLI   0) Termina qui'
+ while :; do
+  printf 'Scelta [Invio = termina]: '
+  if ! IFS= read -r scelta; then break; fi
+  case ${scelta,,} in
+   1|agy|antigravity) NEXT=agy ;;
+   2|codex) NEXT=codex ;;
+   3|claude) NEXT=claude ;;
+   4|gemini) NEXT=gemini ;;
+   ''|0) break ;;
+   *) echo 'Scegli 1, 2, 3, 4 oppure 0.'; continue ;;
+  esac
+  echo 'Il server e gia configurato. Per un agente diverso puo servire il suo login.'
+  exec 9>&-
+  exec "$AGENTE_CMD" "$NEXT"
+ done
+fi
 exit "$rc"

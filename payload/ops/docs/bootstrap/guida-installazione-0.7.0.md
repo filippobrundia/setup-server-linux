@@ -14,3 +14,6 @@ Rapporto: /srv/ops/docs/bootstrap/esito-configurazione.md. Log reali: /var/log/o
 Le esclusioni consentono il collaudo locale; non sono verifiche superate. Senza copia remota gate e manutenzione automatica restano bloccati. Gemini richiede API key; Antigravity usa login Google. Le quote e l'accesso del modello possono bloccare il suo collaudo: nessun servizio a pagamento viene attivato.
 
 Il comando dichiara il piano e passa all installer l impronta dei parametri: se cambiano fra preparazione e avvio, nessun passo parte. Restano i controlli di integrita, la conferma di correzioni locali, firewall, riavvio e manutenzione.
+
+Alla richiesta di login Antigravity: completa l'accesso Google, poi esci con Ctrl-D dalla schermata di agy. Il login resta salvato e il setup prosegue nella stessa finestra; non aprire una chat di configurazione.
+A setup riuscito compare il menu finale: Antigravity, Codex, Claude, Gemini CLI oppure termina. La scelta apre l'agente per amministrare il server senza ripetere la configurazione; con un fornitore diverso può servire il suo login. Invio termina senza aprire chat.
