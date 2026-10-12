@@ -17,3 +17,6 @@ Journal: due errori networkctl su veth rimosse, cinque sessioni SSH terminate co
 
 ## Ripresa
 Bootstrap chiuso per il laboratorio. Le prove di produzione e robustezza restano nel backlog; non riaprire sviluppo senza un requisito o difetto concreto. Prossimo lavoro: Paperclip, Chief per primo, un agente alla volta. Nessun bootstrap eseguito sul N100.
+
+## Riapertura mirata — 2026-10-12
+La prova dell'archivio finale su VM pulita ha trovato un difetto di autonomia: il namespace Antigravity nasconde rete e hostname e le letture ordinarie chiedono approvazioni. Correzione: ops-host-check di root, eseguito senza privilegi, ammette soltanto --rileva e --piano; queste operazioni sono preautorizzate sul server reale. Nessuna autorizzazione generale a ip, sudo o installer; nessun allentamento dei permessi Netplan. La shell include /usr/local/sbin. La prova container mirata verifica rilevamento, piano, rifiuti, assenza di scritture e syntax; manca la prova del nuovo percorso con Antigravity sulla VM. I 315/315 precedenti appartengono al pacchetto precedente e non validano questa modifica.

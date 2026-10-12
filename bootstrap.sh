@@ -130,7 +130,7 @@ if [ "$KBONLY" = 1 ] && [ ! -f "$OPS/.bootstrap/manifest" ]; then
   die "--knowledge-base-only richiede una /srv/ops già preparata da questo pacchetto"
 fi
 
-for f in payload/ops/AGENTS.md.tmpl payload/ops/maint/install-maint payload/ops/maint/ops-maint payload/home/bash_aliases.block; do
+for f in payload/ops/bin/ops-host-check payload/ops/AGENTS.md.tmpl payload/ops/maint/install-maint payload/ops/maint/ops-maint payload/home/bash_aliases.block; do
   [ -f "$PKG/$f" ] || die "pacchetto incompleto: manca $f"
 done
 for f in "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/ops-agy" "$PKG/payload/ops/maint/install-maint" "$PKG"/payload/ops/docs/bootstrap/*.sh "$PKG/payload/ops/docs/bootstrap/ops-installa"; do
@@ -563,6 +563,9 @@ fi
 install -d -o root -g root -m 0755 /usr/local/lib/ops-bootstrap /usr/local/bin
 install -o root -g root -m 0755 "$STAGE/ops/bin/ops-host-check" /usr/local/bin/ops-host-check
 install -o root -g root -m 0644 "$STAGE/ops/docs/bootstrap/rileva-parametri.sh" /usr/local/lib/ops-bootstrap/rileva-parametri.sh
+
+[ "$(stat -c '%U:%G %a' /usr/local/bin/ops-host-check)" = "root:root 755" ] && cmp -s "$STAGE/ops/bin/ops-host-check" /usr/local/bin/ops-host-check || die "diagnostico host non conforme"
+[ "$(stat -c '%U:%G %a' /usr/local/lib/ops-bootstrap/rileva-parametri.sh)" = "root:root 644" ] && cmp -s "$STAGE/ops/docs/bootstrap/rileva-parametri.sh" /usr/local/lib/ops-bootstrap/rileva-parametri.sh || die "rilevamento host non conforme"
 
 # ============================================================== VERIFY
 log "== VERIFY"
