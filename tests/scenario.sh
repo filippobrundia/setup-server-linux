@@ -302,7 +302,7 @@ fi
 echo "== T11 analisi statica (shellcheck -S warning)"
 apt-get install -y -qq shellcheck >/dev/null 2>&1
 for f in "$PKG/bootstrap.sh" "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/ops-agy" "$PKG/payload/ops/maint/install-maint" "$PKG"/payload/ops/docs/bootstrap/*.sh "$PKG/payload/ops/docs/bootstrap/ops-installa"; do
-  case $f in *.mjs) t "node syntax ${f#$PKG/}" node --check "$f"; continue ;; esac
+  case $f in *.py) t "python syntax ${f#$PKG/}" python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "$f"; continue ;; *.mjs) t "node syntax ${f#$PKG/}" node --check "$f"; continue ;; esac
   if shellcheck -S warning -x -P SCRIPTDIR "$f" > /tmp/sc.txt 2>&1; then pass "shellcheck ${f#$PKG/}"; else bad "shellcheck ${f#$PKG/}"; sed 's/^/   | /' /tmp/sc.txt | head -30; fi
 done
 

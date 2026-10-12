@@ -1,15 +1,19 @@
 {
-  "general": { "enableAutoUpdate": false, "defaultApprovalMode": "default" },
-  "security": { "auth": { "selectedType": "gemini-api-key" }, "toolSandboxing": true, "disableYoloMode": true },
-  "privacy": { "usageStatisticsEnabled": false },
+  "general": {
+    "enableAutoUpdate": false,
+    "defaultApprovalMode": "default"
+  },
+  "security": {
+    "auth": {
+      "selectedType": "gemini-api-key"
+    },
+    "toolSandboxing": true,
+    "disableYoloMode": true
+  },
+  "privacy": {
+    "usageStatisticsEnabled": false
+  },
   "tools": {
-    "sandbox": false,
-    "allowed": [
-      "run_shell_command(/srv/ops/bin/quick-check)", "run_shell_command(/srv/ops/bin/kb sync)", "run_shell_command(/srv/ops/bin/kb status)",
-      "run_shell_command(/srv/ops/bin/kb search)", "run_shell_command(/srv/ops/bin/kb index)", "run_shell_command(/srv/ops/bin/cli-update --verify)",
-      "run_shell_command(systemctl status)", "run_shell_command(systemctl is-active)", "run_shell_command(systemctl list-timers)",
-      "run_shell_command(journalctl)", "run_shell_command(git add)", "run_shell_command(git commit)", "run_shell_command(git status)",
-      "run_shell_command(git diff)", "run_shell_command(git log)"
-    ]
+    "sandbox": false
   }
 }

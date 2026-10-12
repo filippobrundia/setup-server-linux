@@ -218,7 +218,7 @@ verify_and_snapshot() {
     stop "${#mism[@]} file del pacchetto non corrispondono alle impronte: nessun passo eseguito. Ripristinare i file (git -C $OPS diff) oppure dichiarare la correzione: sudo ops-installa --dichiara-correzione <file>"
   fi
   P=$SNAP/docs/bootstrap
-  ENVV=(OPS_DIR="$OPS" OPS_TEMPLATES="$SNAP/maint/templates" OPS_MAINT_DIR="$SNAP/maint")
+  ENVV=(OPS_DIR="$OPS" OPS_CONFIG_GUIDED=1 OPS_TEMPLATES="$SNAP/maint/templates" OPS_MAINT_DIR="$SNAP/maint")
 }
 
 # ------------------------------------------------------------------ amministratore: avanzamento e host.conf

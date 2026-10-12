@@ -46,8 +46,8 @@ if [[ " $ESCL " == *' 10.3 '* ]] && [[ " $ESCL " != *' 12.8 '* ]]; then echo '10
 install -d -m 0700 "$HOME/.local/state/ops"
 exec 9>"$HOME/.local/state/ops/configura-server.lock"
 flock -n 9 || { echo 'Una configurazione e gia in corso.' >&2; exit 3; }
-"$HOSTCHECK" --rileva
-OPS_DIR="$OPS" /bin/bash "$RILEVA" --scrivi --profilo "$PROF" --esclusioni "$ESCL"
+echo "Preparazione automatica dei parametri del server reale..."
+OPS_CONFIG_GUIDED=1 OPS_DIR="$OPS" /bin/bash "$RILEVA" --scrivi --profilo "$PROF" --esclusioni "$ESCL"
 DEC=$OPS/docs/decisions.md
 MARK="Configurazione deterministica: profilo=$PROF; esclusioni=$ESCL"
 if ! grep -Fq "$MARK" "$DEC"; then

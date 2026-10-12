@@ -1,0 +1,96 @@
+# Permessi ordinari Gemini; sandbox attiva e altri comandi soggetti a conferma.
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "sudo"
+decision = "deny"
+priority = 900
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "/srv/ops/bin/quick-check"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "/srv/ops/bin/kb sync"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "/srv/ops/bin/kb status"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "/srv/ops/bin/kb search"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "/srv/ops/bin/kb index"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "/srv/ops/bin/cli-update --verify"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "systemctl status"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "systemctl is-active"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "systemctl list-timers"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "journalctl"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "git add"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "git commit"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "git status"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "git diff"
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "git log"
+decision = "allow"
+priority = 100

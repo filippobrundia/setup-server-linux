@@ -57,6 +57,7 @@ for kv in "LAN_CIDR=$LAN" "MOUNTS=$MNT" "DATA_MOUNT=$DATA" "SERVICES=$SVC" "PROF
   printf '  %-11s proposto: %-28s attuale: %s\n' "$k" "\"$v\"" "${cur:-(vuoto)}"
 done
 echo
+if [ "${OPS_CONFIG_GUIDED:-0}" != 1 ]; then
 echo "== Da decidere con il proprietario (una sola richiesta)"
 [ -n "$P" ] || echo "  - PROFILO: base (senza container) oppure docker (base + Docker, passo 8)"
 [ -n "$(hc AGENTE)$(hc AGENTI_CLI)" ] || echo "  - AGENTE: agente della sessione, da scegliere con il comando agente (Claude Code, Codex CLI, Antigravity CLI, Gemini CLI)"
@@ -66,6 +67,7 @@ echo "== Da decidere con il proprietario (una sola richiesta)"
 MCFG=$(hc MONITOR_CFG); MCFG=${MCFG//\$HOME/$HOME}
 [ -s "$MCFG/healthchecks-ping-url" ] || echo "  - 11.2 Healthchecks: passaggi personali del runbook monitoraggio-esterno.md oppure escludere 11.2"
 echo "  - 12.8 finestra di manutenzione automatica: approvarla alla fine (conferma scritta in ops-installa) oppure escludere 12.8"
+fi
 
 if [ "$SCRIVI" = 1 ]; then
   for kv in "LAN_CIDR=$LAN" "MOUNTS=$MNT" "DATA_MOUNT=$DATA" "SERVICES=$SVC" "PROFILO=$PROF" "ESCLUSIONI=$ESCL"; do
@@ -79,5 +81,9 @@ if [ "$SCRIVI" = 1 ]; then
     sed -i -E "s#^$k=(\"[^\"]*\"|'[^']*'|[^[:space:]]*)#$k=\"$v\"#" "$HC"
     echo "  scritto: $k=\"$v\""
   done
-  echo "Fatto. Controllare con: git -C $OPS diff host.conf; poi commit e: ops-installa --piano"
+  if [ "${OPS_CONFIG_GUIDED:-0}" = 1 ]; then
+    echo "Parametri preparati. Registrazione e verifica del piano automatiche: non lanciare altri comandi."
+  else
+    echo "Fatto. Controllare con: git -C $OPS diff host.conf; poi commit e: ops-installa --piano"
+  fi
 fi

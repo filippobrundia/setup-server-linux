@@ -58,6 +58,8 @@ check_rc() { local want=$1; shift; set +e; run_cfg "$@" > "$C/out" 2>&1; local g
 check_rc 0 --profilo docker --esclusioni '7.1 10.3 11.2 12.8' --prepara
 [ ! -e "$C/trace" ]
 grep -q '^SERVICES="ssh cron ufw fail2ban docker"' "$C/srv/ops/host.conf"
+! grep -q 'Da decidere con il proprietario' "$C/out"
+! grep -q 'poi commit e:' "$C/out"
 echo 'PASS preparazione reale senza login o sudo'
 for a in claude codex agy gemini; do
  sed -i "s/^AGENTE=.*/AGENTE=\"$a\"/" "$C/srv/ops/host.conf"

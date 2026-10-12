@@ -217,7 +217,11 @@ PEERS=$(ssh_peers); miss=$(uncovered <<<"$PEERS")
 [ -n "$PEERS" ] && [ -z "$miss" ] && ok "sessione SSH ancora stabilita dopo l'attivazione" || ko "sorgenti fuori regola: $miss"
 echo "  ripristino automatico: verso le $RB_AT ($RB_UNIT.timer)"
 echo
-echo "ORA: apri un NUOVO login SSH (password corretta). Se riesce:"
-echo "  sudo bash $OPS/docs/bootstrap/passo7-impostazioni.sh --confirm"
-echo "Se non riesce: entro $ROLLBACK_MIN minuti UFW si disattiva da solo; oppure dalla console --rollback."
+if [ "${OPS_CONFIG_GUIDED:-0}" = 1 ]; then
+  echo "Firewall attivato: segui la richiesta dell'installer qui sotto. Non eseguire --confirm a mano."
+else
+  echo "ORA: apri un NUOVO login SSH. Se riesce:"
+  echo "  sudo bash $OPS/docs/bootstrap/passo7-impostazioni.sh --confirm"
+  echo "Se non riesce: entro $ROLLBACK_MIN minuti UFW si disattiva da solo; oppure dalla console --rollback."
+fi
 exit $bad

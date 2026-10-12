@@ -130,11 +130,11 @@ if [ "$KBONLY" = 1 ] && [ ! -f "$OPS/.bootstrap/manifest" ]; then
   die "--knowledge-base-only richiede una /srv/ops già preparata da questo pacchetto"
 fi
 
-for f in payload/ops/bin/configura-server payload/ops/bin/ops-host-check payload/ops/AGENTS.md.tmpl payload/ops/maint/install-maint payload/ops/maint/ops-maint payload/home/bash_aliases.block; do
+for f in payload/ops/bin/gemini-policy-migrate.py payload/home/gemini-ops-policy.toml payload/ops/bin/configura-server payload/ops/bin/ops-host-check payload/ops/AGENTS.md.tmpl payload/ops/maint/install-maint payload/ops/maint/ops-maint payload/home/bash_aliases.block; do
   [ -f "$PKG/$f" ] || die "pacchetto incompleto: manca $f"
 done
 for f in "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/ops-agy" "$PKG/payload/ops/maint/install-maint" "$PKG"/payload/ops/docs/bootstrap/*.sh "$PKG/payload/ops/docs/bootstrap/ops-installa"; do
-  case $f in *.mjs) if command -v node >/dev/null; then node --check "$f" || die "errore di sintassi in $f"; fi; continue ;; esac
+  case $f in *.py) if command -v python3 >/dev/null; then python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "$f" || die "errore di sintassi in $f"; fi; continue ;; *.mjs) if command -v node >/dev/null; then node --check "$f" || die "errore di sintassi in $f"; fi; continue ;; esac
   bash -n "$f" || die "errore di sintassi in $f"
 done
 
@@ -522,10 +522,17 @@ if ! cmp -s <(jq -S . "$AGS") <(jq -S . "$STAGE/agy-current.json"); then
   cp -p "$AGS" "$AGS.bak-$TS"
   install -o "$ADMIN" -g "$ADMIN" -m 0600 "$STAGE/agy-current.json" "$AGS"
 fi
+# Regole gestite nel formato attuale; file separato dalle policy personali.
+as_admin install -d -m 0700 "$AHOME/.gemini/policies"
+if [ -e "$AHOME/.gemini/policies/ops-bootstrap.toml" ] && ! cmp -s "$AHOME/.gemini/policies/ops-bootstrap.toml" "$PKG/payload/home/gemini-ops-policy.toml"; then
+  cp -p "$AHOME/.gemini/policies/ops-bootstrap.toml" "$AHOME/.gemini/policies/ops-bootstrap.toml.bak-$TS"
+fi
+python3 "$PKG/payload/ops/bin/gemini-policy-migrate.py" "$GMS" "$PKG/payload/home/gemini-ops-policy.toml" "$AHOME/.gemini/policies/ops-bootstrap.toml" > "$STAGE/gemini-policy.toml" || die "permessi Gemini da migrare: configurazione esistente conservata"
+install -o "$ADMIN" -g "$ADMIN" -m 0600 "$STAGE/gemini-policy.toml" "$AHOME/.gemini/policies/ops-bootstrap.toml"
 merge_json "$GMS" "$PKG/payload/home/gemini-settings.json" 0600
 # Migrazione obbligatoria dal contenitore completo 0.7.0 alla sandbox degli strumenti.
 # Il processo della CLI vede l'host; ogni strumento usa bubblewrap e seccomp.
-jq '.tools.sandbox = false | .security.toolSandboxing = true | .security.disableYoloMode = true' "$GMS" > "$STAGE/gemini-native.json"
+jq '.tools.sandbox = false | .security.toolSandboxing = true | .security.disableYoloMode = true | del(.tools.allowed)' "$GMS" > "$STAGE/gemini-native.json"
 if ! cmp -s <(jq -S . "$GMS") <(jq -S . "$STAGE/gemini-native.json"); then
   cp -p "$GMS" "$GMS.bak-$TS"
   install -o "$ADMIN" -g "$ADMIN" -m 0600 "$STAGE/gemini-native.json" "$GMS"

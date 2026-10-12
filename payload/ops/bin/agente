@@ -65,7 +65,8 @@ login() {  # guida il login personale del solo agente scelto (credenziali: inter
       say "Login di Antigravity (account Google personale, piano gratuito): agy mostra un URL di autorizzazione."
       say "  1. aprire l'URL nel browser del PC e accedere con l'account Google;"
       say "  2. copiare il codice mostrato dal browser e incollarlo qui;"
-      say "  3. a login completato uscire da agy (/quit o Ctrl-D): il collaudo riparte da solo."
+      say "  3. dopo il login compare la chat: NON darle un compito, premi Ctrl-D per chiuderla. Il login resta salvato."
+      say "     La procedura attende questa chiusura, poi continua automaticamente nella stessa finestra."
       (cd "$OPS" && "$AGY") ;;
     gemini)
       say "Gemini CLI usa una chiave API di Google AI Studio (https://aistudio.google.com/apikey) creata nel browser del PC."
@@ -79,7 +80,11 @@ login() {  # guida il login personale del solo agente scelto (credenziali: inter
       unset k; say "chiave salvata in ~/.gemini/.env (0600, fuori da /srv/ops e dai backup del repository)" ;;
   esac
 }
-autenticato() { "$CLI_UPDATE" --stato | awk -F'|' -v a="$1" '$1 == a {exit ($5 == "fatto" ? 0 : 1)}'; }
+autenticato() {
+  # Codex conosce il proprio archivio di accesso: non dedurlo dallo stato degli altri agenti.
+  if [ "$1" = codex ]; then codex login status >/dev/null 2>&1; return $?; fi
+  "$CLI_UPDATE" --stato | awk -F'|' -v a="$1" '$1 == a {ok = ($5 == "fatto")} END {exit !ok}'
+}
 avvia() {  # $1 agente: avvio interattivo in /srv/ops (stessa funzione della shell)
   if grep -qx 'STATO: IN CORSO' "$OPS/docs/bootstrap/avanzamento.md" 2>/dev/null; then
     say 'La base si configura con configura-server nel terminale: nessuna chat AI esegue i passi.'
