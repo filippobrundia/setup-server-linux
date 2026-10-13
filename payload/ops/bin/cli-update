@@ -58,7 +58,7 @@ perms_ok() {  # nessuna modalità che salta approvazioni o sandbox, nessun autoa
   case $1 in
     claude) f=$HOME/.claude/settings.json
             ! grep -qE '"(bypassPermissions|dangerously[A-Za-z]*)"' "$f" && grep -q '"DISABLE_AUTOUPDATER": *"1"' "$f" \
-              && jq -e '.sandbox.enabled == true and .sandbox.failIfUnavailable == true and .sandbox.allowUnsandboxedCommands == false' "$f" >/dev/null 2>&1 ;;
+              && jq -e '.sandbox.enabled == true and .sandbox.failIfUnavailable == true and .sandbox.allowUnsandboxedCommands == false and .sandbox.bwrapPath == "/usr/local/libexec/ops-claude-sandbox/bwrap"' "$f" >/dev/null 2>&1 ;;
     codex)  f=$HOME/.codex/config.toml
             [ -f "$f" ] && ! grep -qsE 'danger-full-access|approval_policy *= *"never"|dangerously' "$f" && [ -f "$HOME/.codex/rules/ops.rules" ] ;;
     agy)    f=$HOME/.gemini/antigravity-cli/settings.json
@@ -116,7 +116,7 @@ login_hint() {
 }
 run_agent() {  # $1 agente, $2 prompt, $3 file di uscita: in /srv/ops, senza terminale; esito del programma
   case $1 in
-    claude) (cd /srv/ops && timeout 300 claude -p "$2") ;;
+    claude) (cd /srv/ops && PATH="/usr/local/libexec/ops-claude-sandbox:$PATH" timeout 300 claude --settings /usr/local/libexec/ops-claude-sandbox/settings.json -p "$2") ;;
     codex)  (cd /srv/ops && timeout 300 codex exec -s read-only --ephemeral --color never "$2") ;;
     agy)    (cd /srv/ops && timeout --foreground --kill-after=10s 300 "$AGY" --sandbox --print-timeout 240s --print="$2") ;;
     gemini) (cd /srv/ops && timeout 300 gemini -p "$2") ;;

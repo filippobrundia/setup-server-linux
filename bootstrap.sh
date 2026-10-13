@@ -56,7 +56,7 @@ SANDBOX_PKGS="bubblewrap socat apparmor"
 AGY=/opt/ops-agenti/antigravity/agy
 BWRAP_PROFILE=/etc/apparmor.d/ops-bwrap
 # blocchi ~/.bash_aliases delle versioni precedenti (0.1.0–0.6.0): sostituiti senza conflitto
-OLD_BLOCKS="c0304d4d9f830ef5b336f53176ff35e27f00f1039da199f3adaaf17ea06fe42a f479cdbe7662d584c3c4877814223315c5ab6d490dab97e34a11ba4b47a9a458"
+OLD_BLOCKS="c0304d4d9f830ef5b336f53176ff35e27f00f1039da199f3adaaf17ea06fe42a f479cdbe7662d584c3c4877814223315c5ab6d490dab97e34a11ba4b47a9a458 93315f012510432627716ba2b5199dcf851201347eb87bf2b80eaf9fb14c0e58"
 GITHUB_ED25519_FPR=SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU   # pubblicata da GitHub (api.github.com/meta)
 
 ADMIN=${SUDO_USER:-}; OWNER=""; CHECK=0; KBONLY=0; KB_REMOTE=""; KB_ID=""; NO_KB=0; AGENTE=""; DEFER_LOGIN=0
@@ -131,10 +131,10 @@ if [ "$KBONLY" = 1 ] && [ ! -f "$OPS/.bootstrap/manifest" ]; then
   die "--knowledge-base-only richiede una /srv/ops già preparata da questo pacchetto"
 fi
 
-for f in payload/ops/bin/gemini-policy-migrate.py payload/home/gemini-ops-policy.toml payload/ops/bin/configura-server payload/ops/bin/ops-host-check payload/ops/AGENTS.md.tmpl payload/ops/maint/install-maint payload/ops/maint/ops-maint payload/home/bash_aliases.block; do
+for f in payload/ops/bin/gemini-policy-migrate.py payload/home/gemini-ops-policy.toml payload/ops/bin/configura-server payload/ops/bin/ops-host-check payload/ops/bin/memoria-iniziale.py payload/ops/bin/claude-sandbox-check payload/ops/AGENTS.md.tmpl payload/ops/maint/install-maint payload/ops/maint/ops-maint payload/ops/maint/install-claude-sandbox payload/ops/maint/claude-bwrap payload/ops/maint/ops-claude-sandbox.profile payload/ops/maint/claude-sandbox-settings.json payload/home/bash_aliases.block; do
   [ -f "$PKG/$f" ] || die "pacchetto incompleto: manca $f"
 done
-for f in "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/ops-agy" "$PKG/payload/ops/maint/install-maint" "$PKG"/payload/ops/docs/bootstrap/*.sh "$PKG/payload/ops/docs/bootstrap/ops-installa"; do
+for f in "$PKG"/payload/ops/bin/* "$PKG/payload/ops/maint/ops-maint" "$PKG/payload/ops/maint/ops-agy" "$PKG/payload/ops/maint/install-maint" "$PKG/payload/ops/maint/install-claude-sandbox" "$PKG/payload/ops/maint/claude-bwrap" "$PKG"/payload/ops/docs/bootstrap/*.sh "$PKG/payload/ops/docs/bootstrap/ops-installa"; do
   case $f in *.py) if command -v python3 >/dev/null; then python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "$f" || die "errore di sintassi in $f"; fi; continue ;; *.mjs) if command -v node >/dev/null; then node --check "$f" || die "errore di sintassi in $f"; fi; continue ;; esac
   bash -n "$f" || die "errore di sintassi in $f"
 done
@@ -504,6 +504,11 @@ if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null |
     log "  bubblewrap: profilo AppArmor ops-bwrap caricato (solo /usr/bin/bwrap)"
   fi
 else log "  AppArmor: restrizione dei namespace non attiva qui, nessun profilo per bubblewrap"; fi
+if [ -r /sys/kernel/security/apparmor/profiles ]; then
+  bash "$STAGE/ops/maint/install-claude-sandbox" "$ADMIN" || die 'sandbox Claude non installata/verificata: non proseguire con un falso successo'
+else
+  log '  AppArmor non accessibile in questo ambiente: collaudo Claude reale non dimostrato (es. container)'
+fi
 # configurazioni: sandbox attive, comandi ordinari consentiti, sudo vietato; chiavi esistenti mai sovrascritte
 merge_json() {  # $1 file dell'amministratore, $2 modello del pacchetto, $3 modo: aggiunge solo le chiavi assenti
   as_admin install -d -m 0700 "$(dirname "$1")"

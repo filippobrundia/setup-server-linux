@@ -302,8 +302,10 @@ mantengono l'uso della copia locale quando la rete non risponde.
 
 Il controllo Claude esegue anche il helper incorporato `apply-seccomp`, senza login o modello, e verifica
 workspace, home protetta, capacità effettive/permesse rimosse, NoNewPrivs e seccomp. Il solo avvio di
-bubblewrap non basta. La correzione del conflitto AppArmor sul kernel della VM resta in collaudo:
-non è ancora integrata né dichiarata funzionante.
+bubblewrap non basta. Il bootstrap installa l’adattatore root-owned e il profilo AppArmor dedicato di Claude,
+senza modificare i sysctl o il profilo bubblewrap di Ubuntu. L’avvio normale, il controllo rapido e il resoconto
+KB sono riusciti sulla VM Ubuntu 26.04 con Claude autenticato. Il comando agente riprende le verifiche dopo
+il riavvio PRIMA del login nel flusso differito. L’installazione completa del candidato su VM pulita resta distinta.
 
 Prove mirate: `tests/memoria-iniziale-test.py`, `tests/configura-server-scenario.sh`,
 `tests/claude-sandbox-check-scenario.sh`, `tests/kb-strict-scenario.sh`. Le prove con processi finti

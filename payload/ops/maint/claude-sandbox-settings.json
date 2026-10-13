@@ -1,0 +1,5 @@
+{
+  "sandbox": {
+    "bwrapPath": "/usr/local/libexec/ops-claude-sandbox/bwrap"
+  }
+}

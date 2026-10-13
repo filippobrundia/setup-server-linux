@@ -11,6 +11,9 @@ cp "$PKG/payload/ops/docs/bootstrap/ops-installa" /usr/local/sbin/ops-installa
 cp "$PKG/payload/ops/docs/bootstrap/"{rileva-parametri.sh,passi-comune.sh} /usr/local/lib/ops-bootstrap/
 chmod 755 /usr/local/bin/configura-server /usr/local/bin/ops-host-check /usr/local/sbin/ops-installa
 cp "$PKG/payload/ops/host.conf.tmpl" /srv/ops/host.conf
+cp "$PKG/payload/ops/bin/memoria-iniziale.py" /srv/ops/bin/
+sed "s/@@HOST@@/$(hostname -s)/g;s/@@ADMIN@@/tester/g" "$PKG/payload/ops/AGENTS.md.tmpl" > /srv/ops/AGENTS.md
+printf 'KB_SCELTA="no"\n' > /srv/ops/kb.conf
 sed -i "s/@@HOST@@/$(hostname -s)/g;s/@@ADMIN@@/tester/g;s/^AGENTE=.*/AGENTE=\"agy\"/" /srv/ops/host.conf
 printf '# Decisioni\n' > /srv/ops/docs/decisions.md
 printf 'STATO: IN CORSO\n' > /srv/ops/docs/bootstrap/avanzamento.md
@@ -51,6 +54,9 @@ runuser -u tester -- git -C /srv/ops commit -qm fixture
 runuser -u tester -- script -qec 'env PATH=/home/tester/.npm-global/bin:/usr/local/bin:/usr/bin:/bin bash /pkg/installa-server.sh --agente antigravity --profilo docker --esclusioni "7.1 10.3 11.2 12.8"' /home/tester/local-entry.log >/dev/null
 [ "$(cat /home/tester/entry-trace)" = "$(printf 'BOOT\nINSTALL')" ]
 echo 'PASS ingresso locale: un comando, TTY conservato, nessuna chat'
+grep -q 'Configurazione iniziale verificata' /srv/ops/docs/overview.md
+! grep -q 'Da compilare al termine' /srv/ops/AGENTS.md
+echo 'PASS ingresso locale compila realmente la memoria nella fixture'
 mkdir -p /tmp/entry-archive/setup-server-linux-0.7.0
 cp "$PKG/bootstrap.sh" /tmp/entry-archive/setup-server-linux-0.7.0/
 chmod 755 /tmp/entry-archive/setup-server-linux-0.7.0/bootstrap.sh
@@ -68,4 +74,3 @@ runuser -u tester -- script -qec "printf ignored | env PATH=/home/tester/.npm-gl
 [ "$(cat /home/tester/entry-trace)" = "$(printf 'BOOT\nINSTALL')" ]
 echo 'PASS ingresso pubblico simulato: impronta verificata, TTY conservato da pipe, unico flusso'
 echo ENTRY_TEST_OK
-

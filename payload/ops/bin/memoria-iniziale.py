@@ -35,7 +35,7 @@ def values(path):
 def command(args):
     try:
         r = subprocess.run(args, capture_output=True, text=True, timeout=30)
-        return r.stdout.strip() if r.returncode == 0 else 'non verificato'
+        return '\n'.join(line.rstrip() for line in r.stdout.strip().splitlines()) if r.returncode == 0 else 'non verificato'
     except (OSError, subprocess.TimeoutExpired):
         return 'non verificato'
 
@@ -104,7 +104,13 @@ def render(ops, data):
                f'- {state}. Stato e prossimo passo: `STATUS.md`; dettagli: `docs/overview.md`.')
     updates[agents] = placeholder.sub(lambda _: summary, original)
     status = ops / 'STATUS.md'
-    updates[status] = section(status, 'Stato della macchina', stamp + base + next_step)
+    status_text = section(status, 'Stato della macchina', stamp + base + next_step)
+    status_text = status_text.replace(
+        'Nessuno registrato. Si aggiungono solo i problemi **riscontrati su questa macchina** (la checklist indica cosa\ncontrollare).',
+        'Controlli e attenzioni della configurazione: `docs/bootstrap/esito-configurazione.md`.\n'
+        'Parti escluse e prove ancora da fare: `docs/future-improvements.md`.\n'
+        'Non dedurre l’assenza di problemi dalla sola conclusione dell’installer.')
+    updates[status] = status_text
     return updates
 
 

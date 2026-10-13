@@ -1,0 +1,16 @@
+#!/bin/bash
+# Adattatore dedicato di Claude, installato da root. Usa SEMPRE il bwrap Ubuntu aggiornato.
+# CAP_SYS_ADMIN serve solo nel namespace iniziale al helper apply-seccomp, che la rimuove.
+set -euo pipefail
+[ "$(id -u)" != 0 ] || { echo 'Adattatore solo per utente non privilegiato' >&2; exit 2; }
+context=$(cat /proc/self/attr/current)
+[[ "$context" = 'ops-claude-sandbox (enforce)' ]] || { echo "Profilo dedicato non associato: $context" >&2; exit 3; }
+args=("$@"); out=(); userns=0
+for a in "${args[@]}"; do case $a in --unshare-user|--unshare-all) userns=1 ;; esac; done
+for ((i=0;i<${#args[@]};i++)); do
+ out+=("${args[i]}")
+ if [ "$userns" = 1 ] && [ "${args[i]}" = --cap-drop ] && [ "${args[i+1]:-}" = ALL ]; then
+  out+=(ALL --cap-add CAP_SYS_ADMIN); i=$((i+1))
+ fi
+done
+exec /usr/bin/bwrap "${out[@]}"

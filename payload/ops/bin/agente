@@ -92,7 +92,11 @@ avvia() {  # $1 agente: avvio interattivo in /srv/ops (stessa funzione della she
   fi
   say "Avvio di $(etichetta "$1") in $OPS. Prompt iniziale suggerito: \"Leggi AGENTS.md e procedi\" (configurazione iniziale o gestione ordinaria)."
   cd "$OPS" || exit 1
-  case $1 in agy) exec "$AGY" ;; *) exec "$1" ;; esac
+  case $1 in
+    agy) exec "$AGY" ;;
+    claude) export PATH="/usr/local/libexec/ops-claude-sandbox:$PATH"; exec claude --settings /usr/local/libexec/ops-claude-sandbox/settings.json ;;
+    *) exec "$1" ;;
+  esac
 }
 
 case ${1:-} in
@@ -100,6 +104,15 @@ case ${1:-} in
   --scegli) a=$(nome_agente "${2:-}"); [ -n "$a" ] || { say "agente: claude, codex, antigravity o gemini"; exit 2; }; registra "$a"; exit $? ;;
   -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
 esac
+# Dopo il riavvio l'utente puo invocare direttamente agente: termina prima le verifiche
+# della configurazione differita, senza aprire login/chat per poi farli richiudere.
+if [ "${1:-}" != --prepara ] \
+   && grep -qE '^AGENTI_LOGIN="dopo-configurazione"' "$HOSTCONF" \
+   && { grep -qx 'STATO: IN CORSO' "$OPS/docs/bootstrap/avanzamento.md" 2>/dev/null \
+        || grep -qE '^Codice finale procedura: [1-9][0-9]*$' "$OPS/docs/bootstrap/esito-configurazione.md" 2>/dev/null; }; then
+  say 'Completo prima le verifiche dopo il riavvio; login e scelta dell agente solo a server configurato.'
+  exec "${OPS_CONFIGURA_CMD:-/usr/local/bin/configura-server}"
+fi
 { exec 3<"$TTY_IN"; } 2>/dev/null || { say "agente: serve un terminale (sessione SSH dell'amministratore)"; exit 2; }   # aperto una volta
 SOLO_PREPARA=0
 if [ "${1:-}" = --prepara ]; then SOLO_PREPARA=1; shift; fi

@@ -51,7 +51,10 @@ OPS_CONFIG_GUIDED=1 OPS_DIR="$OPS" /bin/bash "$RILEVA" --scrivi --profilo "$PROF
 DEC=$OPS/docs/decisions.md
 MARK="Configurazione deterministica: profilo=$PROF; esclusioni=$ESCL"
 if ! grep -Fq "$MARK" "$DEC"; then
- printf '\n### %s — %s\nParametri rilevati sul server reale; disco e rete verificati dal piano. Le esclusioni restano da completare per la produzione. Copia remota mancante: gate e manutenzione automatica bloccati.\n' "$(date -u +%F)" "$MARK" >> "$DEC"
+ printf '\n### %s — %s\nParametri rilevati sul server reale; disco e rete verificati dal piano. Gli esiti effettivi vengono registrati durante l’esecuzione. Le esclusioni restano da completare per la produzione.\n' "$(date -u +%F)" "$MARK" >> "$DEC"
+ if [[ " $ESCL " == *' 10.3 '* ]]; then
+  printf '10.3 esclusa: copia remota mancante, gate e manutenzione automatica bloccati.\n' >> "$DEC"
+ fi
 fi
 git -C "$OPS" add host.conf docs/decisions.md
 if ! git -C "$OPS" diff --cached --quiet -- host.conf docs/decisions.md; then git -C "$OPS" commit -m 'Parametri della configurazione deterministica' -- host.conf docs/decisions.md; fi
@@ -69,6 +72,7 @@ set +e
 sudo "$INSTALLA" --parametri-sha256 "$PARAM_SHA"
 rc=$?
 set -e
+INSTALL_RC=$rc
 if [ "$rc" = 5 ]; then
  echo 'Attesa di conferma firewall o riavvio. Dopo il nuovo login rilancia configura-server: non ripete i passi completati.'
  exit 5
@@ -104,7 +108,7 @@ PYKB
 fi
 {
  echo '# Esito della configurazione deterministica'
- printf '\nData UTC: %s\nProfilo: %s\nEsclusioni: %s\nCodice reale installer: %s\n' "$(date -u +%FT%TZ)" "$PROF" "$ESCL" "$rc"
+ printf '\nData UTC: %s\nProfilo: %s\nEsclusioni: %s\nCodice reale installer: %s\nCodice finale procedura: %s\n' "$(date -u +%FT%TZ)" "$PROF" "$ESCL" "$INSTALL_RC" "$rc"
  grep -m1 '^STATO:' "$OPS/docs/bootstrap/avanzamento.md" || true
  printf '\nKnowledge Base: %s\n' "$KB_ESITO"
  echo; echo 'Log e stato: /var/log/ops-installa/. Le esclusioni non sono prove superate.'

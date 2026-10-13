@@ -94,7 +94,7 @@ chiedergli come risolvere tecnicamente il problema.
   senza password generalizzato, nessuna modalità globale che salta le approvazioni degli strumenti; i lavori
   programmati girano con i privilegi minimi (codice eseguito da root solo in `/usr/local/sbin`, di proprietà di root).
 - **Sandbox e permessi degli agenti**: ogni agente lavora nella propria sandbox (Claude Code e Codex con bubblewrap,
-  Antigravity con i namespace del kernel e il profilo AppArmor `ops-agy`, Gemini CLI in un container podman rootless)
+  Antigravity con i namespace del kernel e il profilo AppArmor `ops-agy`, Gemini CLI con la sandbox nativa dei tool)
   e i comandi ordinari che la sandbox non permette sono già consentiti uno per uno (`quick-check`, `kb sync|status|
   index|search`, `cli-update --verify`, `git add|commit`, `systemctl`/`journalctl` in lettura); `sudo` è vietato.
   Non chiedere di disattivare la sandbox né di uscirne per comodità: se un'operazione autorizzata la richiede,

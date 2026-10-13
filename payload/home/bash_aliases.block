@@ -5,7 +5,7 @@
 case ":$PATH:" in *":$HOME/.npm-global/bin:"*) ;; *) PATH="$HOME/.npm-global/bin:$PATH" ;; esac
 case ":$PATH:" in *":/usr/local/sbin:"*) ;; *) PATH="/usr/local/sbin:$PATH" ;; esac
 unalias claude codex gemini agy agente 2>/dev/null
-claude() { ( cd /srv/ops && command claude "$@" ); }
+claude() { ( cd /srv/ops && PATH="/usr/local/libexec/ops-claude-sandbox:$PATH" command claude --settings /usr/local/libexec/ops-claude-sandbox/settings.json "$@" ); }
 codex()  { ( cd /srv/ops && command codex "$@" ); }
 gemini() { ( cd /srv/ops && command gemini "$@" ); }
 agy()    { ( cd /srv/ops && AGY_CLI_DISABLE_AUTO_UPDATE=true /opt/ops-agenti/antigravity/agy "$@" ); }

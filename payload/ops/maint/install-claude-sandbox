@@ -1,0 +1,80 @@
+#!/bin/bash
+# Installazione transazionale: profilo dedicato, controllo reale senza modello, rollback su errore.
+# Eseguito soltanto dal bootstrap root, dopo l'installazione del CLI.
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo 'Richiede root' >&2; exit 2; }
+ADMIN=${1:-}
+[[ "$ADMIN" =~ ^[a-z_][a-z0-9_-]*$ ]] && [ "$(id -u "$ADMIN")" -ge 1000 ] || exit 2
+BASE=$(cd "$(dirname "$0")" && pwd)
+DIR=/usr/local/libexec/ops-claude-sandbox
+PROFILE=/etc/apparmor.d/ops-claude-sandbox
+MANIFEST=/var/lib/ops-bootstrap/claude-sandbox.manifest
+PROTO=0
+for f in "$BASE/claude-bwrap" "$BASE/ops-claude-sandbox.profile" "$BASE/claude-sandbox-settings.json" "$BASE/../bin/claude-sandbox-check"; do
+ [ -f "$f" ] && [ ! -L "$f" ] || { echo "Componente assente/non regolare: $f" >&2; exit 3; }
+done
+apparmor_parser -Q -K "$BASE/ops-claude-sandbox.profile"
+if [ -e "$DIR" ] || [ -e "$PROFILE" ] || [ -e "$MANIFEST" ]; then
+ # Non sovrascrive componenti locali, compreso un prototipo di collaudo non ancora adottato.
+ [ -d "$DIR" ] && [ ! -L "$DIR" ] && [ "$(stat -c '%u:%a' "$DIR")" = 0:755 ] || exit 3
+ if [ -e "$MANIFEST" ]; then
+  [ -f "$MANIFEST" ] && [ ! -L "$MANIFEST" ] && [ "$(stat -c '%u:%a' "$MANIFEST")" = 0:600 ] || exit 3
+  sha256sum --status -c "$MANIFEST" || { echo 'Componente locale diverso dal manifest: nessuna sovrascrittura' >&2; exit 3; }
+ else
+  # Adozione ESCLUSIVA del prototipo gia collaudato su questa VM; checksum esatti, non file generici.
+  [ ! -L "$DIR/bwrap" ] && [ ! -L "$PROFILE" ] && [ ! -e "$DIR/check" ] && [ ! -e "$DIR/settings.json" ] || exit 3
+  [ "$(stat -c '%u:%a' "$DIR/bwrap")" = 0:755 ] && [ "$(stat -c '%u:%a' "$PROFILE")" = 0:644 ] || exit 3
+  hash=$(sha256sum "$DIR/bwrap"); [ "${hash%% *}" = 41182cf02560a84d5b4f96c5659fccd0e68becbafff8f097954d03490590bcdd ] || exit 3
+  hash=$(sha256sum "$PROFILE"); [ "${hash%% *}" = 17906842a7770b075ea36aad00f4b4139705fdb40008a147d5eb9e1ca7876d75 ] || exit 3
+  PROTO=1
+ fi
+fi
+BACK=$(mktemp -d /var/backups/ops-claude-sandbox-install.XXXXXX)
+HAD=0; COMMITTED=0
+if [ "$PROTO" = 1 ]; then
+ HAD=2
+ cp -p "$DIR/bwrap" "$BACK/bwrap"; cp -p "$PROFILE" "$BACK/profile"
+fi
+if [ -e "$MANIFEST" ]; then
+ HAD=1
+ cp -p "$DIR/bwrap" "$BACK/bwrap"
+ cp -p "$DIR/check" "$BACK/check"
+ cp -p "$DIR/settings.json" "$BACK/settings.json"
+ cp -p "$PROFILE" "$BACK/profile"
+ cp -p "$MANIFEST" "$BACK/manifest"
+fi
+rollback() {
+ local rc=$?
+ if [ "$COMMITTED" = 0 ]; then
+  [ ! -f "$BACK/verifica.log" ] || tail -n 15 "$BACK/verifica.log" >&2
+  if [ "$HAD" = 1 ]; then
+   cp -p "$BACK/bwrap" "$DIR/bwrap"; cp -p "$BACK/check" "$DIR/check"
+   cp -p "$BACK/settings.json" "$DIR/settings.json"
+   cp -p "$BACK/profile" "$PROFILE"; cp -p "$BACK/manifest" "$MANIFEST"
+   apparmor_parser -r "$PROFILE" || true
+  elif [ "$HAD" = 2 ]; then
+   cp -p "$BACK/bwrap" "$DIR/bwrap"; cp -p "$BACK/profile" "$PROFILE"
+   rm -f "$DIR/check" "$DIR/settings.json" "$MANIFEST"
+   apparmor_parser -r "$PROFILE" || true
+  else
+   [ ! -f "$PROFILE" ] || apparmor_parser -R "$PROFILE" >/dev/null 2>&1 || true
+   rm -f "$PROFILE" "$DIR/bwrap" "$DIR/check" "$DIR/settings.json" "$MANIFEST"
+   rmdir "$DIR" 2>/dev/null || true
+  fi
+  echo "Installazione Claude annullata; log: $BACK/verifica.log" >&2
+ fi
+ exit "$rc"
+}
+trap rollback EXIT
+install -d -o root -g root -m 0755 "$DIR" /var/lib/ops-bootstrap
+install -o root -g root -m 0755 "$BASE/claude-bwrap" "$DIR/bwrap"
+install -o root -g root -m 0755 "$BASE/../bin/claude-sandbox-check" "$DIR/check"
+install -o root -g root -m 0644 "$BASE/claude-sandbox-settings.json" "$DIR/settings.json"
+install -o root -g root -m 0644 "$BASE/ops-claude-sandbox.profile" "$PROFILE"
+apparmor_parser -r "$PROFILE"
+runuser -u "$ADMIN" -- "$DIR/check" /srv/ops > "$BACK/verifica.log" 2>&1
+sha256sum "$DIR/bwrap" "$DIR/check" "$DIR/settings.json" "$PROFILE" > "$MANIFEST"
+chmod 0600 "$MANIFEST"
+COMMITTED=1
+cat "$BACK/verifica.log"
+echo "Sandbox Claude verificata; recupero: $BACK"

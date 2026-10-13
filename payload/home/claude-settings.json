@@ -2,6 +2,7 @@
   "env": { "DISABLE_AUTOUPDATER": "1" },
   "autoUpdatesChannel": "stable",
   "sandbox": {
+    "bwrapPath": "/usr/local/libexec/ops-claude-sandbox/bwrap",
     "enabled": true,
     "failIfUnavailable": true,
     "allowUnsandboxedCommands": false,

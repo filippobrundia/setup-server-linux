@@ -34,6 +34,7 @@ runuser -u agtest -- mkdir -p $FB $AH/.claude $AH/.codex/rules $AH/.gemini/antig
 cat > $AG/finto <<'EOF'
 #!/bin/bash
 n=${FINTO:-$(basename "$0")}; m=$(cat /tmp/ag/$n.mode 2>/dev/null || echo ok); echo "$n $*" >> /tmp/ag/calls
+[ "${1:-}" != --settings ] || shift 2
 a="$*"
 case $1 in
   --version) echo "1.0.0"; exit 0 ;;
@@ -281,6 +282,24 @@ grep -q "ops-agy $(printf '%s' /opt/ops-agenti/antigravity/agy) flags=(unconfine
   && pass "A26 profilo ops-agy mirato al solo binario di root (userns)" || bad "A26 contenuto del profilo ops-agy"
 out=$(runuser -u tester -- /srv/ops/bin/cli-update --ambiente 2>&1); echo "$out" | sed 's/^/   (container) /'
 grep -q 'agy: ambiente OK' <<<"$out" && pass "A26b ambiente di Antigravity conforme anche in container" || bad "A26b ambiente di Antigravity"
+
+# Ripresa prima del login: prova isolata, nessun sudo/modello.
+mkdir -p "$AG/ops/docs/bootstrap"
+printf 'STATO: IN CORSO\n' > "$AG/ops/docs/bootstrap/avanzamento.md"
+printf 'AGENTI_LOGIN="dopo-configurazione"\n' >> "$HCA"
+printf '#!/bin/bash\necho CONFIGURA_SERVER_RIPRESA\n' > "$AG/fake-configura"
+chmod 0755 "$AG/fake-configura"
+: > "$AG/calls"
+out=$(runuser -u agtest -- env "${AGV[@]}" OPS_CONFIGURA_CMD="$AG/fake-configura" "$AGC" claude 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q CONFIGURA_SERVER_RIPRESA <<< "$out" && [ ! -s "$AG/calls" ] \
+  && pass "A26b dopo riavvio: agente riprende prima di login, collaudo o chat" || { bad "A26b ripresa prima login"; echo "$out"; }
+printf 'STATO: COMPLETATO CON ESCLUSIONI\n' > "$AG/ops/docs/bootstrap/avanzamento.md"
+printf 'Codice finale procedura: 7\n' > "$AG/ops/docs/bootstrap/esito-configurazione.md"
+out=$(runuser -u agtest -- env "${AGV[@]}" OPS_CONFIGURA_CMD="$AG/fake-configura" "$AGC" claude 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q CONFIGURA_SERVER_RIPRESA <<< "$out" && [ ! -s "$AG/calls" ] \
+  && pass "A26c KB finale fallita: nessun login/chat prima della correzione" || { bad "A26c guardia KB finale"; echo "$out"; }
+sed -i '/^AGENTI_LOGIN=/d' "$HCA"
+rm "$AG/ops/docs/bootstrap/avanzamento.md" "$AG/ops/docs/bootstrap/esito-configurazione.md"
 
 echo "== A27 blocco ~/.bash_aliases della 0.6.0 aggiornato senza conflitto"
 cat > $AG/blocco-060 <<'EOF'
