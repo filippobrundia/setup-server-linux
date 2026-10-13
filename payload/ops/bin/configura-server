@@ -51,7 +51,7 @@ OPS_CONFIG_GUIDED=1 OPS_DIR="$OPS" /bin/bash "$RILEVA" --scrivi --profilo "$PROF
 DEC=$OPS/docs/decisions.md
 MARK="Configurazione deterministica: profilo=$PROF; esclusioni=$ESCL"
 if ! grep -Fq "$MARK" "$DEC"; then
- printf '\n### %s — %s\nParametri rilevati sul server reale; disco e rete verificati dal piano. Gli esiti effettivi vengono registrati durante l’esecuzione. Le esclusioni restano da completare per la produzione.\n' "$(date -u +%F)" "$MARK" >> "$DEC"
+ printf '\n### %s — %s\nParametri rilevati sul server reale; disco e rete verificati dal piano. Gli esiti effettivi vengono registrati durante i passi. Le esclusioni restano da completare per la produzione.\n' "$(date -u +%F)" "$MARK" >> "$DEC"
  if [[ " $ESCL " == *' 10.3 '* ]]; then
   printf '10.3 esclusa: copia remota mancante, gate e manutenzione automatica bloccati.\n' >> "$DEC"
  fi
