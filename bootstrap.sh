@@ -639,13 +639,17 @@ if [ -n "$AGENTE" ] && [ "$(hc_agente)" != "$AGENTE" ]; then
 fi
 [ -n "$AGENTE" ] || AGENTE=$(hc_agente)
 prossimo() {
-  log "$1 Prossimo passo, come $ADMIN:  /srv/ops/bin/agente   (nei nuovi terminali basta: agente)"
-  if [ -n "$AGENTE" ]; then log "  agente della sessione: $(etichetta "$AGENTE"). Il comando guida il login personale SOLO di questo agente,"
-  else log "  nessun agente scelto: il comando chiede con quale avviare la sessione, guida il login personale SOLO di quello,"; fi
-  log "  esegue il collaudo operativo e lo avvia in /srv/ops; se non è utilizzabile permette di sceglierne un altro."
-  log "  Nessuna chat di configurazione: configura-server rileva i parametri e prepara il piano. Il comando"
-  log "  unico da lanciare in una sessione SSH: sudo ops-installa"
+  if grep -q '^STATO: COMPLETATO' "$OPS/docs/bootstrap/avanzamento.md"; then
+    log "$1 Base aggiornata. La configurazione del server resta completata."
+    log "  configura-server mostra il rapporto e la scelta finale; agente apre una sessione amministrativa."
+  else
+    log "$1 Base pronta. Se hai avviato installa-server.sh, il setup continua automaticamente nello stesso terminale."
+    log "  Non aprire una chat AI e non lanciare altri comandi durante il setup."
+    log "  Per avvio manuale o ripresa: configura-server (profilo ed esclusioni vanno dichiarati al primo avvio)."
+  fi
+  log "  Credenziali solo dell'agente scelto; alla fine puoi scegliere un altro agente senza reinstallare il server."
 }
+
 if [ "$KB_STATE" = fallita ]; then
   log "ATTENZIONE: Knowledge Base richiesta ma NON collegata: vedere le istruzioni sopra (il resto è completo)."
   prossimo "Il resto è pronto."

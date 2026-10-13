@@ -311,7 +311,7 @@ runuser -u tester -- sed -i 's|^AGENTE=.*|AGENTE=""|' /srv/ops/host.conf; runuse
 printf 'boh\nAntigravity\n' > $AG/risposte; chmod 0644 $AG/risposte
 AGENTE_TTY=$AG/risposte AGENTE_TTY_OUT=$AG/domande bash "$PKG/bootstrap.sh" --admin tester "${KBARGS[@]}" > /tmp/out.txt 2>&1; rc=$?
 [ "$rc" = 0 ] && grep -q 'Con quale agente vuoi avviare la sessione? Claude Code / Codex CLI / Antigravity CLI / Gemini CLI' $AG/domande && grep -q 'risposta non riconosciuta' $AG/domande \
-  && grep -q '^AGENTE="agy"' /srv/ops/host.conf && runuser -u tester -- git -C /srv/ops log -1 --format=%s | grep -q 'Antigravity CLI' && grep -q '/srv/ops/bin/agente' /tmp/out.txt \
+  && grep -q '^AGENTE="agy"' /srv/ops/host.conf && runuser -u tester -- git -C /srv/ops log -1 --format=%s | grep -q 'Antigravity CLI' && grep -q 'configura-server' /tmp/out.txt \
   && pass "A28a domanda dopo l'installazione: quattro nomi distinti, risposta registrata con commit, prossimo passo agente" || { bad "A28a (rc=$rc)"; tail -10 /tmp/out.txt; cat $AG/domande; }
 bash "$PKG/bootstrap.sh" --admin tester "${KBARGS[@]}" < /dev/null > /tmp/out.txt 2>&1; rc=$?
 [ "$rc" = 0 ] && ! grep -q 'Con quale agente' /tmp/out.txt && grep -q 'Antigravity CLI' /tmp/out.txt && pass "A28b rieseguito: nessuna nuova domanda, nessuna reinstallazione" || { bad "A28b (rc=$rc)"; tail -5 /tmp/out.txt; }
