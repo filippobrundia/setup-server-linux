@@ -6,6 +6,7 @@
 #   kb sync [--quiet]        recupera i nuovi record; non tocca il lavoro locale; senza rete usa la copia locale.
 #                            Esce con 0 anche quando usa la copia locale: il successo è solo la riga "sincronizzata:"
 #                            (o "ultima sincronizzazione riuscita" di kb status)
+#   kb sync --strict        per il collaudo: accesso negato/rete assente restituiscono errore; nessun falso successo.
 #   kb status                ultima sincronizzazione, record locali non pubblicati, stato della copia
 #   kb new "Titolo"          crea records/RECORD-<data>-<server>-<casuale>/RECORD.md da completare
 #   kb validate RECORD-…     struttura, metadati, collegamenti, assenza di segreti
@@ -37,6 +38,7 @@ SELF=$(readlink -f "$0")
 TOKEN_DEFAULT="$HOME/.config/ops-kb/token"   # fuori dai repository e dai backup della foundation
 TIMEOUT=${KB_TIMEOUT:-30}
 QUIET=0
+STRICT_SYNC=0
 say()  { [ "$QUIET" = 1 ] || echo "$*"; }
 die()  { echo "kb: STOP: $*" >&2; exit 3; }
 warn() { echo "kb: ATTENZIONE: $*" >&2; }
@@ -181,7 +183,7 @@ cmd_init() {
   date -u +%s > "$(STATE)"; cmd_index; say "Knowledge Base recuperata in $KB_DIR ($(g rev-parse --short HEAD))"
 }
 cmd_sync() {
-  [ -n "$KB_REMOTE" ] || not_configured
+  [ -n "$KB_REMOTE" ] || { [ "$STRICT_SYNC" = 0 ] && not_configured; die "Knowledge Base non configurata"; }
   [ -d "$KB_DIR/.git" ] || die "copia locale non inizializzata: kb init"
   local last err; last=$(cat "$(STATE)" 2>/dev/null || echo 0)
   set_credential
@@ -199,7 +201,8 @@ cmd_sync() {
     else
       echo "kb: repository non raggiungibile: uso la copia locale, aggiornata al $quando (potrebbe non essere aggiornata)" >&2
     fi
-    exit 0
+    [ "$STRICT_SYNC" = 0 ] && exit 0
+    exit 4
   fi
   rm -f "$KB_DIR/.git/kb-errore"
   local ahead behind; ahead=$(g rev-list --count "origin/$KB_BRANCH..HEAD"); behind=$(g rev-list --count "HEAD..origin/$KB_BRANCH")
@@ -441,7 +444,7 @@ cmd_token() {  # sostituisce il token: verifica il nuovo accesso, poi ripristina
 
 case ${1:-} in
   init) cmd_init ;;
-  sync) [ "${2:-}" = --quiet ] && QUIET=1; cmd_sync ;;
+  sync) shift; for option in "$@"; do case $option in --quiet) QUIET=1 ;; --strict) STRICT_SYNC=1 ;; *) die "opzione sync non ammessa" ;; esac; done; cmd_sync ;;
   status) cmd_status ;;
   new) shift; cmd_new "$@" ;;
   validate) cmd_validate "${2:-}" ;;

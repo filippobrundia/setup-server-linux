@@ -1,6 +1,6 @@
 #!/bin/bash
 # configura-server — orchestratore deterministico gestito da setup-server-linux.
-# Utente amministratore in SSH: login del solo agente, preparazione, sudo ops-installa e rapporto.
+# Utente amministratore in SSH: preparazione, sudo ops-installa, memoria e rapporto; login finale.
 # Nessun modello decide o esegue i passi di installazione.
 set -euo pipefail
 export PATH="$HOME/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" LC_ALL=C.UTF-8
@@ -74,10 +74,39 @@ if [ "$rc" = 5 ]; then
  exit 5
 fi
 REPORT=$OPS/docs/bootstrap/esito-configurazione.md
+KB_ESITO='Non controllata: configurazione non conclusa.'
+if [ "$rc" = 0 ]; then
+ python3 "$OPS/bin/memoria-iniziale.py" "$OPS" || rc=6
+fi
+if [ "$rc" = 0 ]; then
+ KB_SCELTA=$(python3 - "$OPS/kb.conf" <<'PYKB'
+import pathlib,re,sys
+p=pathlib.Path(sys.argv[1])
+choices=[]
+if p.is_file() and not p.is_symlink():
+ for line in p.read_text().splitlines():
+  m=re.fullmatch(r'KB_SCELTA="(si|no)"\s*(?:#.*)?',line)
+  if m: choices.append(m[1])
+print(choices[0] if len(choices)==1 else 'incompleta')
+PYKB
+ )
+ case $KB_SCELTA in
+  no) KB_ESITO='Non collegata per scelta del proprietario.' ;;
+  si)
+   if timeout --kill-after=5s 120 "$OPS/bin/kb" sync --quiet --strict; then
+    KB_ESITO='Sincronizzazione immediata riuscita; esito del cron periodico da verificare separatamente.'
+   else
+    KB_ESITO='Sincronizzazione fallita: consultare kb status. La sola configurazione non prova accesso e aggiornamento.'
+    rc=7
+   fi ;;
+  *) KB_ESITO='Scelta KB non registrata correttamente: completare il collegamento o dichiarare la rinuncia.'; rc=7 ;;
+ esac
+fi
 {
  echo '# Esito della configurazione deterministica'
  printf '\nData UTC: %s\nProfilo: %s\nEsclusioni: %s\nCodice reale installer: %s\n' "$(date -u +%FT%TZ)" "$PROF" "$ESCL" "$rc"
  grep -m1 '^STATO:' "$OPS/docs/bootstrap/avanzamento.md" || true
+ printf '\nKnowledge Base: %s\n' "$KB_ESITO"
  echo; echo 'Log e stato: /var/log/ops-installa/. Le esclusioni non sono prove superate.'
  echo; "$OPS/bin/quick-check" || true
 } > "$REPORT"
@@ -88,11 +117,16 @@ CHANGE=$OPS/CHANGELOG.md
 if [ "$rc" = 0 ]; then
   sed -i 's/\*\*Configurazione iniziale in corso\*\*/**Configurazione iniziale eseguita: vedi esito deterministico**/' "$STATUS"
 fi
-printf '\n## Configurazione deterministica — %s\nCodice installer: %s. Profilo: %s. Esclusioni: %s. Rapporto: docs/bootstrap/esito-configurazione.md. Le esclusioni non valgono come prove superate per produzione.\n' "$(date -u +%FT%TZ)" "$rc" "$PROF" "${ESCL:-(nessuna)}" >> "$STATUS"
+printf '\n## Configurazione deterministica — %s\nCodice finale: %s. Profilo: %s. Esclusioni: %s. Rapporto: docs/bootstrap/esito-configurazione.md. Le esclusioni non valgono come prove superate per produzione.\nKnowledge Base: %s\n' "$(date -u +%FT%TZ)" "$rc" "$PROF" "${ESCL:-(nessuna)}" "$KB_ESITO" >> "$STATUS"
 printf '\n- %s — Configurazione deterministica, codice %s; rapporto salvato, esclusioni: %s.\n' "$(date -u +%F)" "$rc" "${ESCL:-(nessuna)}" >> "$CHANGE"
 git -C "$OPS" add STATUS.md CHANGELOG.md
+if [ "$rc" = 0 ] || [ "$rc" = 7 ]; then
+ git -C "$OPS" add AGENTS.md docs/overview.md docs/system.md docs/network.md docs/storage-backup.md docs/security.md docs/future-improvements.md
+fi
 git -C "$OPS" add docs/bootstrap/esito-configurazione.md
-git -C "$OPS" diff --cached --quiet -- docs/bootstrap/esito-configurazione.md || git -C "$OPS" commit -m 'Esito della configurazione deterministica' -- docs/bootstrap/esito-configurazione.md STATUS.md CHANGELOG.md
+MEM_FILES=(docs/bootstrap/esito-configurazione.md STATUS.md CHANGELOG.md)
+if [ "$rc" = 0 ] || [ "$rc" = 7 ]; then MEM_FILES+=(AGENTS.md docs/overview.md docs/system.md docs/network.md docs/storage-backup.md docs/security.md docs/future-improvements.md); fi
+git -C "$OPS" diff --quiet HEAD -- "${MEM_FILES[@]}" || git -C "$OPS" commit -m 'Esito e memoria della configurazione deterministica' -- "${MEM_FILES[@]}"
 cat "$REPORT"
 # La scelta avviene solo dopo un setup riuscito e dal terminale personale.
 # Nessun avvio di chat implicito nelle riprese senza terminale o nei test.

@@ -104,7 +104,8 @@ cat > $AG/gemini-check <<'EOF'
 echo 'OK sandbox nativa simulata'
 EOF
 chmod 0755 $AG/gemini-check
-ENVV=(OPS_HOSTCONF=$HCA OPS_AGY_BIN=$AG/agy OPS_AGY_CMD=$FB/ops-agy OPS_GEMINI_CHECK=$AG/gemini-check MAINT_LOCK=$AG/lock MAINT_BIN=$AG/fake-maint)
+printf '#!/bin/bash\nexit 0\n' > $AG/claude-check; chmod 0755 $AG/claude-check
+ENVV=(OPS_HOSTCONF=$HCA OPS_AGY_BIN=$AG/agy OPS_AGY_CMD=$FB/ops-agy OPS_GEMINI_CHECK=$AG/gemini-check OPS_CLAUDE_CHECK=$AG/claude-check MAINT_LOCK=$AG/lock MAINT_BIN=$AG/fake-maint)
 cuv() { runuser -u agtest -- env "${ENVV[@]}" "$@" > $AG/out 2>&1; echo $?; }
 calls() { cat $AG/calls 2>/dev/null; }
 

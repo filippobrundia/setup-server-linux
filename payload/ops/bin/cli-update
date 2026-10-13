@@ -22,6 +22,7 @@ HOSTCONF=${OPS_HOSTCONF:-/srv/ops/host.conf}
 AGY=${OPS_AGY_BIN:-/opt/ops-agenti/antigravity/agy}
 OPS_AGY=${OPS_AGY_CMD:-/usr/local/sbin/ops-agy}
 GEMINI_CHECK=${OPS_GEMINI_CHECK:-/srv/ops/bin/gemini-sandbox-check.mjs}
+CLAUDE_CHECK=${OPS_CLAUDE_CHECK:-/srv/ops/bin/claude-sandbox-check}
 DRY=${DRY_RUN:-0}
 TUTTI="claude codex agy gemini"
 PROMPT="Rispondi solo con ciò che sai già dal contesto iniziale, senza eseguire comandi né leggere file. Da quale file vengono le istruzioni di progetto che hai ricevuto all'avvio? Qual è la sequenza obbligatoria per gli interventi importanti?"
@@ -86,7 +87,9 @@ ambiente() {  # $1 agente: stampa il motivo ed esce con 1 se non conforme
   perms_ok "$a" || { echo "configurazione di sandbox, permessi o aggiornamenti non conforme"; return 1; }
   case $a in
     claude) command -v socat >/dev/null || { echo "socat assente (sandbox di Claude Code)"; return 1; }
-            bwrap_ok || { echo "bubblewrap assente o senza namespace: $(tail -n 1 "$WORK/bwrap.txt" 2>/dev/null)"; return 1; } ;;
+            bwrap_ok || { echo "bubblewrap assente o senza namespace: $(tail -n 1 "$WORK/bwrap.txt" 2>/dev/null)"; return 1; }
+            "$CLAUDE_CHECK" /srv/ops > "$WORK/sandbox-claude.txt" 2>&1 \
+              || { echo "sandbox Claude non conforme: $(tail -n 1 "$WORK/sandbox-claude.txt")"; return 1; } ;;
     codex)  bwrap_ok || { echo "bubblewrap assente o senza namespace: $(tail -n 1 "$WORK/bwrap.txt" 2>/dev/null)"; return 1; }
             m=$(codex_sandbox_ok) || { echo "$m"; return 1; } ;;
     agy)    m=$("$OPS_AGY" verify 2>&1) || { echo "ops-agy verify: $(grep '^KO' <<<"$m" | head -n 2 | paste -sd';' -)"; return 1; } ;;

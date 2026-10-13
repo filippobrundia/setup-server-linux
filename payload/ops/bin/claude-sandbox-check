@@ -1,0 +1,33 @@
+#!/bin/bash
+# Prova reale del helper apply-seccomp incorporato, SENZA login e SENZA chiamate AI.
+# Il semplice avvio di bwrap non verifica la compatibilita dei namespace annidati.
+set -euo pipefail
+export PATH="$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
+DIR=/usr/local/libexec/ops-claude-sandbox
+if [ -x "$DIR/bwrap" ]; then export PATH="$DIR:$PATH"; fi
+BIN=$(readlink -f "$(command -v claude)")
+OPS=${1:-/srv/ops}
+[[ "$OPS" = /* ]] && [ -r "$OPS/AGENTS.md" ] && [ -x "$BIN" ] || exit 2
+PROBE=.ops-claude-sandbox-check-$$
+[ ! -e "$OPS/$PROBE" ] && [ ! -e "$HOME/$PROBE" ] || exit 2
+cleanup() { rm -f "$OPS/$PROBE" "$HOME/$PROBE"; }
+trap cleanup EXIT
+if out=$(env ARGV0=apply-seccomp timeout --kill-after=5s 30 bwrap \
+ --ro-bind / / --bind "$OPS" "$OPS" --dev /dev --proc /proc \
+ --unshare-all --die-with-parent --cap-drop ALL -- \
+ "$BIN" /bin/sh -c '
+ set -e
+ test -r "$1/AGENTS.md"
+ touch "$1/$3"; rm "$1/$3"
+ if touch "$2/$3" 2>/dev/null; then echo HOME_NON_PROTETTA; exit 1; fi
+ grep -q "^CapEff:[[:space:]]*0000000000000000$" /proc/self/status
+ grep -q "^CapPrm:[[:space:]]*0000000000000000$" /proc/self/status
+ grep -q "^NoNewPrivs:[[:space:]]*1$" /proc/self/status
+ grep -q "^Seccomp:[[:space:]]*2$" /proc/self/status
+ echo CLAUDE_SANDBOX_VERIFICATA
+ ' sh "$OPS" "$HOME" "$PROBE" 2>&1); then
+ printf '%s\n' "$out"
+ grep -qx 'CLAUDE_SANDBOX_VERIFICATA' <<< "$out"
+else
+ rc=$?; printf '%s\n' "$out"; exit "$rc"
+fi

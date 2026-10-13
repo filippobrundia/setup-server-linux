@@ -10,8 +10,11 @@ cp "$PKG/payload/ops/docs/bootstrap/rileva-parametri.sh" "$C/usr/local/lib/ops-b
 cp "$PKG/payload/ops/docs/bootstrap/ops-installa" "$C/usr/local/sbin/ops-installa"
 cp "$PKG/payload/ops/docs/bootstrap/passi-comune.sh" "$C/srv/ops/docs/bootstrap/"
 cp "$PKG/payload/ops/host.conf.tmpl" "$C/srv/ops/host.conf"
+cp "$PKG/payload/ops/bin/memoria-iniziale.py" "$C/srv/ops/bin/"
+sed "s/@@HOST@@/$(hostname -s)/g;s/@@ADMIN@@/$U/g" "$PKG/payload/ops/AGENTS.md.tmpl" > "$C/srv/ops/AGENTS.md"
 sed -i "s/@@HOST@@/$(hostname -s)/g;s/@@ADMIN@@/$U/g;s/^AGENTE=.*/AGENTE=\"agy\"/" "$C/srv/ops/host.conf"
 printf '# Decisioni\n' > "$C/srv/ops/docs/decisions.md"
+printf 'KB_SCELTA="no"\n' > "$C/srv/ops/kb.conf"
 printf 'STATO: IN CORSO\n' > "$C/srv/ops/docs/bootstrap/avanzamento.md"
 cat > "$C/usr/local/bin/ops-host-check" <<'EOF'
 #!/bin/bash
@@ -43,6 +46,7 @@ cat > "$C/fakebin/sudo" <<'EOF'
 expected=$(sha256sum "$CT/srv/ops/host.conf"); expected=${expected%% *}
 [ "$3" = "$expected" ] || exit 91
 echo SUDO_INSTALLER >> "$CT/trace"
+[ "${SIM_RC:-0}" != 0 ] || printf 'STATO: COMPLETATO CON ESCLUSIONI (7.1 10.3 11.2 12.8)\n' > "$CT/srv/ops/docs/bootstrap/avanzamento.md"
 exit "${SIM_RC:-0}"
 EOF
 printf '#!/bin/bash\necho QUICK_CHECK\n' > "$C/srv/ops/bin/quick-check"
@@ -69,6 +73,19 @@ for a in claude codex agy gemini; do
  grep -q 'Codice reale installer: 0' "$C/srv/ops/docs/bootstrap/esito-configurazione.md"
  echo "PASS flusso comune per $a, nessuna chat interattiva"
 done
+! grep -q 'Da compilare al termine' "$C/srv/ops/AGENTS.md"
+grep -q 'Configurazione iniziale verificata' "$C/srv/ops/docs/overview.md"
+grep -q '10.3: copia remota non configurata' "$C/srv/ops/docs/future-improvements.md"
+echo 'PASS memoria iniziale compilata automaticamente, esclusioni mantenute visibili'
+printf 'KB_SCELTA="si"\n' > "$C/srv/ops/kb.conf"
+printf '#!/bin/bash\nexit 1\n' > "$C/srv/ops/bin/kb"; chmod +x "$C/srv/ops/bin/kb"
+check_rc 7
+grep -q 'Sincronizzazione fallita' "$C/srv/ops/STATUS.md"
+printf '#!/bin/bash\nexit 0\n' > "$C/srv/ops/bin/kb"
+check_rc 0
+grep -q 'Sincronizzazione immediata riuscita' "$C/srv/ops/docs/bootstrap/esito-configurazione.md"
+printf 'KB_SCELTA="no"\n' > "$C/srv/ops/kb.conf"
+echo 'PASS KB: accesso fallito impedisce falso successo, accesso riuscito registrato (server simulato)'
 : > "$C/trace"; chown "$U:$U" "$C/trace"; SIM_LOGIN_RC=1; check_rc 1; ! grep -q SUDO "$C/trace"; SIM_LOGIN_RC=0
 echo 'PASS login fallito blocca installer'
 SIM_RC=5; check_rc 5; grep -q 'rilancia configura-server' "$C/out"
@@ -115,4 +132,3 @@ printf '\n' | script -q -e -c "runuser -u $U -- env CT=$C OPS_CONFIG_TEST_ROOT=$
 echo 'PASS termine senza chat: nessun agente avviato implicitamente'
 shellcheck -S warning "$PKG/payload/ops/bin/configura-server" "$PKG/installa-server.sh" "$PKG/install.sh"
 echo 'CONFIGURA_SERVER_TEST_OK'
-

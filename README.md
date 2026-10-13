@@ -293,3 +293,19 @@ Antigravity operativo sulla VM Ubuntu 26.04: workspace scrivibile, home protetta
 
 ## Flusso deterministico comune (12 ottobre 2026)
 Il collaudo su VM pulita ha mostrato che il prompt AI iniziale chiedeva approvazioni ordinarie ripetute. Il requisito non era soddisfatto. Ora installa-server.sh e install.sh --configura avviano configura-server nel terminale reale: rilevamento, parametri, piano, login del solo agente, sudo ops-installa e rapporto. La chat non esegue i passi. L'impronta dei parametri lega il piano dichiarato all'esecuzione; file del pacchetto e stato restano protetti da root. Le prove precedenti 315/315 non validano questa modifica; banco mirato e regressioni complete sono separati dal collaudo VM. Dettagli: payload/ops/docs/bootstrap/flusso-deterministico.md.
+# Correzioni di collaudo del 13 ottobre 2026 (non una nuova release)
+
+La configurazione deterministica compila la memoria iniziale della macchina dopo i passi superati,
+preserva i testi personalizzati e registra le esclusioni. Il rapporto finale usa `kb sync --quiet --strict`:
+un collegamento non aggiornabile non vale come sincronizzazione riuscita. Il cron e il comando ordinario
+mantengono l'uso della copia locale quando la rete non risponde.
+
+Il controllo Claude esegue anche il helper incorporato `apply-seccomp`, senza login o modello, e verifica
+workspace, home protetta, capacità effettive/permesse rimosse, NoNewPrivs e seccomp. Il solo avvio di
+bubblewrap non basta. La correzione del conflitto AppArmor sul kernel della VM resta in collaudo:
+non è ancora integrata né dichiarata funzionante.
+
+Prove mirate: `tests/memoria-iniziale-test.py`, `tests/configura-server-scenario.sh`,
+`tests/claude-sandbox-check-scenario.sh`, `tests/kb-strict-scenario.sh`. Le prove con processi finti
+non certificano le sandbox del kernel né gli account reali; il test Git locale non certifica il cron
+o l'accesso alla KB privata su GitHub.
