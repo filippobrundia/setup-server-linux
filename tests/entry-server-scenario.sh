@@ -25,8 +25,8 @@ cat > /home/tester/.npm-global/bin/sudo <<'EOF'
 set -e
 [ -t 0 ] || exit 95
 case $1 in
- /bin/bash) [[ "$2" = */bootstrap.sh ]] || exit 96; echo BOOT >> /home/tester/entry-trace ;;
- */bootstrap.sh) [ "$2" = --admin ] && [ "$3" = tester ] || exit 96; echo BOOT >> /home/tester/entry-trace ;;
+ /bin/bash) [[ "$2" = */bootstrap.sh ]] || exit 96; case " $* " in *' --login-dopo-configurazione '*) ;; *) exit 94 ;; esac; echo BOOT >> /home/tester/entry-trace; sed -i '/^AGENTI_LOGIN=/d' /srv/ops/host.conf; printf '\nAGENTI_LOGIN="dopo-configurazione"\n' >> /srv/ops/host.conf ;;
+ */bootstrap.sh) [ "$2" = --admin ] && [ "$3" = tester ] || exit 96; case " $* " in *' --login-dopo-configurazione '*) ;; *) exit 94 ;; esac; echo BOOT >> /home/tester/entry-trace; sed -i '/^AGENTI_LOGIN=/d' /srv/ops/host.conf; printf '\nAGENTI_LOGIN="dopo-configurazione"\n' >> /srv/ops/host.conf ;;
  /usr/local/sbin/ops-installa)
   [ "$#" = 3 ] && [ "$2" = --parametri-sha256 ] || exit 97
   h=$(sha256sum /srv/ops/host.conf); [ "$3" = "${h%% *}" ] || exit 98
@@ -49,7 +49,7 @@ runuser -u tester -- git -C /srv/ops config user.email fixture@invalid
 runuser -u tester -- git -C /srv/ops add .
 runuser -u tester -- git -C /srv/ops commit -qm fixture
 runuser -u tester -- script -qec 'env PATH=/home/tester/.npm-global/bin:/usr/local/bin:/usr/bin:/bin bash /pkg/installa-server.sh --agente antigravity --profilo docker --esclusioni "7.1 10.3 11.2 12.8"' /home/tester/local-entry.log >/dev/null
-[ "$(cat /home/tester/entry-trace)" = "$(printf 'BOOT\nLOGIN\nINSTALL')" ]
+[ "$(cat /home/tester/entry-trace)" = "$(printf 'BOOT\nINSTALL')" ]
 echo 'PASS ingresso locale: un comando, TTY conservato, nessuna chat'
 mkdir -p /tmp/entry-archive/setup-server-linux-0.7.0
 cp "$PKG/bootstrap.sh" /tmp/entry-archive/setup-server-linux-0.7.0/
@@ -65,7 +65,7 @@ EOF
 chmod 755 /home/tester/.npm-global/bin/curl
 runuser -u tester -- sh -c ': > /home/tester/entry-trace'
 runuser -u tester -- script -qec "printf ignored | env PATH=/home/tester/.npm-global/bin:/usr/local/bin:/usr/bin:/bin bash /pkg/install.sh --sha256 $h --configura --agente antigravity --profilo docker --esclusioni '7.1 10.3 11.2 12.8'" /home/tester/public-entry.log >/dev/null
-[ "$(cat /home/tester/entry-trace)" = "$(printf 'BOOT\nLOGIN\nINSTALL')" ]
+[ "$(cat /home/tester/entry-trace)" = "$(printf 'BOOT\nINSTALL')" ]
 echo 'PASS ingresso pubblico simulato: impronta verificata, TTY conservato da pipe, unico flusso'
 echo ENTRY_TEST_OK
 

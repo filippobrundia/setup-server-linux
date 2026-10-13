@@ -58,10 +58,13 @@ if ! git -C "$OPS" diff --cached --quiet -- host.conf docs/decisions.md; then gi
 "$HOSTCHECK" --piano
 if [ "$PREPARA" = 1 ]; then echo 'Preparazione superata: nessun sudo e nessuna installazione eseguiti.'; exit 0; fi
 SEL=$(hc AGENTE)
-[ -n "$SEL" ] || { echo 'Scegliere prima l agente con agente --scegli NOME.' >&2; exit 3; }
 PARAM_SHA=$(sha256sum "$HC"); PARAM_SHA=${PARAM_SHA%% *}
-# Login e prova solo dell'agente scelto; non si apre una chat di configurazione.
-"$AGENTE_CMD" --prepara "$SEL"
+if [ "$(hc AGENTI_LOGIN)" = dopo-configurazione ]; then
+ echo 'Gli agenti saranno autenticati solo dopo la configurazione, quando ne scegli uno. Nessuna chiamata AI nel setup.'
+else
+ [ -n "$SEL" ] || { echo 'Scegliere prima l agente con agente --scegli NOME.' >&2; exit 3; }
+ "$AGENTE_CMD" --prepara "$SEL"
+fi
 set +e
 sudo "$INSTALLA" --parametri-sha256 "$PARAM_SHA"
 rc=$?

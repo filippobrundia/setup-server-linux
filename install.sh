@@ -76,7 +76,7 @@ fi
 echo "== avvio: sudo $DEST/bootstrap.sh --admin $ME ${ARGS[*]:-}"
 if [ "$CONFIGURA" = 1 ]; then
   for a in "${ARGS[@]}"; do case $a in --check|--knowledge-base-only) die "--configura non si combina con $a" ;; esac; done
-  sudo "$DEST/bootstrap.sh" --admin "$ME" "${ARGS[@]}" < /dev/tty
+  sudo "$DEST/bootstrap.sh" --admin "$ME" --login-dopo-configurazione "${ARGS[@]}" < /dev/tty
   exec /usr/local/bin/configura-server "${CONFARGS[@]}" < /dev/tty
 else
   if [ -r /dev/tty ]; then exec sudo "$DEST/bootstrap.sh" --admin "$ME" "${ARGS[@]}" < /dev/tty

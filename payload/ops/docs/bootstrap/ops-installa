@@ -137,11 +137,12 @@ load_params() {  # $1 = file passi-comune.sh da usare; raccoglie TUTTI i problem
   # agente della sessione, collaudato nel passo 12.7 (cli-update legge la stessa riga senza eseguire host.conf);
   # compatibilità: AGENTI_CLI della correzione locale 0.6.0 (primo nome)
   local n l
-  for n in AGENTE AGENTI_CLI; do [ "$(grep -cE "^$n=" "$HOSTCONF")" -le 1 ] || PROBLEMI+=("$n dichiarato più volte: lasciarne una sola riga"); done
+  for n in AGENTE AGENTI_CLI AGENTI_LOGIN; do [ "$(grep -cE "^$n=" "$HOSTCONF")" -le 1 ] || PROBLEMI+=("$n dichiarato più volte: lasciarne una sola riga"); done
   AGENTE=$(hc_get AGENTE); [ -n "$AGENTE" ] || { l=$(hc_get AGENTI_CLI); AGENTE=${l%% *}; }
+  case $(hc_get AGENTI_LOGIN) in ""|dopo-configurazione) ;; *) PROBLEMI+=("AGENTI_LOGIN non valido") ;; esac
   case $AGENTE in
     claude|codex|agy|gemini) ;;
-    "") PROBLEMI+=("AGENTE vuoto: agente della sessione da scegliere con il comando agente (claude, codex, antigravity, gemini)") ;;
+    "") [ "$(hc_get AGENTI_LOGIN)" = dopo-configurazione ] || PROBLEMI+=("AGENTE vuoto: agente della sessione da scegliere con il comando agente (claude, codex, antigravity, gemini)") ;;
     *) PROBLEMI+=("AGENTE non valido: $AGENTE (claude codex agy gemini)") ;;
   esac
   return 0
@@ -396,7 +397,11 @@ act_attivazione() {
     printf '%s  APPROVAZIONE della finestra data dal proprietario con conferma scritta (da registrare in docs/decisions.md)\n' \
       "$(date -u '+%F %T')" >> "$RUNDIR/riepilogo.log"
   fi
-  run_logged 12.8-cli-update bash "$SNAP/maint/install-maint" enable cli-update || return 1
+  if [ "$(hc_get AGENTI_LOGIN)" = dopo-configurazione ]; then
+    say "Aggiornamento automatico dei CLI non attivato: si abilita dopo login e verifica dell'agente, separatamente dalla finestra del server."
+  else
+    run_logged 12.8-cli-update bash "$SNAP/maint/install-maint" enable cli-update || return 1
+  fi
 }
 
 do_step() {  # esegue l'azione del passo corrente; 0 superato, 1 errore, 5 pausa
@@ -418,7 +423,9 @@ print_plan() {
   say "Configurazione iniziale di $HOST — amministratore $ADMIN, profilo ${PROFILO:-?}, pacchetto $(cat "$OPS/.bootstrap/version" 2>/dev/null || echo ?)"
   say "Parametri: LAN_CIDR=$LAN_CIDR DATA_MOUNT=$DATA_MOUNT MOUNTS=\"$MOUNTS\" SERVICES=\"$SERVICES\" OFFSITE=${OFFSITE:-(vuoto)}"
   say "Esclusioni dichiarate: ${ESCLUSIONI:-nessuna}"
-  say "Agente della sessione (collaudo operativo in 12.7; gli altri tre: solo ambiente e sandbox): ${AGENTE:-(da scegliere con: agente)}"
+  if [ "$(hc_get AGENTI_LOGIN)" = dopo-configurazione ]; then
+    say "Agenti: ambiente dei quattro verificato in 12.7; scelta, login e prova del modello dopo il setup."
+  else say "Agente della sessione (collaudo operativo in 12.7; gli altri tre: solo ambiente e sandbox): ${AGENTE:-(da scegliere con: agente)}"; fi
   [ -z "$ESCLUSIONI" ] || say "Con esclusioni l'esito possibile è \"collaudo locale completato con esclusioni\": la validazione per produzione resta incompleta."
   ! excluded 10.3 || say "10.3 esclusa: la copia remota mancante continua a bloccare quick-check --gate, ops-maint attended e la finestra automatica."
   for line in "${STEPS[@]}"; do

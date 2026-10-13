@@ -13,6 +13,6 @@ while [ $# -gt 0 ]; do
   *) echo "Opzione non ammessa: $1" >&2; exit 2 ;;
  esac
 done
-sudo /bin/bash "$DIR/bootstrap.sh" --admin "$(id -un)" "${BOOT[@]}"
+sudo /bin/bash "$DIR/bootstrap.sh" --admin "$(id -un)" --login-dopo-configurazione "${BOOT[@]}"
 [ "$CHECK" = 0 ] || exit 0
 exec /usr/local/bin/configura-server "${CONF[@]}" < /dev/tty

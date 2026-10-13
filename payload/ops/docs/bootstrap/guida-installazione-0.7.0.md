@@ -1,21 +1,19 @@
-# Guida unica — configurazione deterministica
+# Guida unica — setup senza login AI
 
-Da una sessione SSH normale, come amministratore:
-- Pacchetto locale estratto: bash installa-server.sh --agente antigravity --profilo docker --esclusioni "7.1 10.3 11.2 12.8"
-- Percorso pubblico, dopo la pubblicazione: bash install.sh --sha256 IMPRONTA --agente antigravity --configura --profilo docker --esclusioni "7.1 10.3 11.2 12.8"
+Da una sessione SSH normale, come amministratore, senza anteporre sudo:
 
-Un comando prepara il bootstrap, collega eventualmente la KB, guida il login del solo agente scelto, rileva i dati dell'host, registra i parametri, esegue il piano, lancia ops-installa e salva il resoconto. Non aprire una conversazione AI per configurare la base.
+```bash
+bash installa-server.sh --profilo docker --esclusioni "7.1 10.3 11.2 12.8"
+```
 
-Interventi personali: credenziali KB e agente, password sudo (il numero dipende dalla durata della cache), nuovo login SSH per il firewall, RIAVVIA per il riavvio, APPROVO per la manutenzione soltanto se inclusa e con prerequisiti soddisfatti.
-Dopo il riavvio o un errore: configura-server. I parametri sono conservati e i passi superati non vengono ripetuti. Il programma non aggira errori, controlli di integrita o blocchi della manutenzione.
+Gli script installano la base, tutti i quattro agenti e i prerequisiti. La Knowledge Base è facoltativa: se privata richiede il suo token, indipendente dagli account AI. Parametri ed esclusioni sono dichiarati prima di procedere; il setup rileva lo stato reale, verifica il piano, configura il sistema e salva il rapporto. Nessun login né chiamata a modelli AI durante il setup.
 
-Rapporto: /srv/ops/docs/bootstrap/esito-configurazione.md. Log reali: /var/log/ops-installa/. Dopo la configurazione, agente NOME apre la normale sessione amministrativa.
+Restano password sudo, nuovo login SSH per confermare il firewall, riavvio presidiato e, se inclusa e con prerequisiti verificati, approvazione della manutenzione. Dopo il riavvio rientra via SSH e lancia `configura-server`: i passi completati non si ripetono e non viene chiesto un login AI.
 
-Le esclusioni consentono il collaudo locale; non sono verifiche superate. Senza copia remota gate e manutenzione automatica restano bloccati. Gemini richiede API key; Antigravity usa login Google. Le quote e l'accesso del modello possono bloccare il suo collaudo: nessun servizio a pagamento viene attivato.
+A setup riuscito compare il menu: Antigravity, Codex, Claude, Gemini CLI oppure termina. Solo se scegli di aprire un agente viene chiesto il suo login e verificato l'accesso al modello e alle istruzioni condivise. Gli altri agenti restano installati, senza credenziali e senza bloccare il server. Puoi scegliere più tardi con `agente`.
 
-Il comando dichiara il piano e passa all installer l impronta dei parametri: se cambiano fra preparazione e avvio, nessun passo parte. Restano i controlli di integrita, la conferma di correzioni locali, firewall, riavvio e manutenzione.
+Rapporto: `/srv/ops/docs/bootstrap/esito-configurazione.md`. Log: `/var/log/ops-installa/`. Il passo 12.7 verifica ambiente e sandbox dei quattro, non l'accesso ai modelli. Gli aggiornamenti automatici dei CLI si abilitano separatamente dopo login e verifica; la finestra del server mantiene i suoi prerequisiti di backup.
 
-Alla richiesta di login Antigravity: completa l'accesso Google, poi esci con Ctrl-D dalla schermata di agy. Il login resta salvato e il setup prosegue nella stessa finestra; non aprire una chat di configurazione.
-A setup riuscito compare il menu finale: Antigravity, Codex, Claude, Gemini CLI oppure termina. La scelta apre l'agente per amministrare il server senza ripetere la configurazione; con un fornitore diverso può servire il suo login. Invio termina senza aprire chat.
+Le esclusioni non sono verifiche superate. Copia remota mancante: gate e manutenzione automatica restano bloccati. Il percorso pubblico si verifica dopo una pubblicazione; per collaudare il candidato basta l'archivio locale verificato.
 
-Percorso definitivo concordato: un avvio nel terminale SSH prepara la base e configura il server automaticamente; gli agenti non ricostruiscono i passi. L'accesso iniziale Antigravity è facoltativo rispetto alla scelta del fornitore, ma il collaudo operativo richiede le credenziali dell'agente selezionato. Il menu finale separa la configurazione del sistema dall'amministrazione successiva. Un account Claude non abilitato, una chiave Gemini non valida o una quota esaurita si gestiscono scegliendo un altro agente: non richiedono di reinstallare il server. Non dichiarare riuscito un accesso perché è apparsa una chat: serve una risposta reale del modello.
+La memoria condivisa è in `/srv/ops`: ogni agente legge AGENTS.md e STATUS.md, confronta il sistema reale, aggiorna documenti, configurazione dei controlli, decisioni e CHANGELOG, poi registra in Git. Un nuovo servizio/container va documentato anche per volumi e copertura del backup. Non esiste un agente AI che osserva continuamente i cambiamenti: gli script monitorano e l'agente interviene quando invocato.

@@ -134,6 +134,13 @@ v_monitoraggio() {
 
 v_agenti() {
   local out rc=0
+  if [ "$(hc_get AGENTI_LOGIN)" = dopo-configurazione ]; then
+    out=$(as_admin "$OPS/bin/cli-update" --ambiente 2>&1) || rc=$?
+    echo "$out" | sed 's/^/  /'
+    [ "$rc" -eq 0 ] && ok "ambiente e sandbox dei quattro agenti verificati, senza login" || ko "ambiente agenti non conforme: uscita $rc"
+    nota "Login, accesso al modello e caricamento runtime di AGENTS.md saranno collaudati solo all'apertura dell'agente scelto."
+    return
+  fi
   out=$(as_admin "$OPS/bin/cli-update" --verify 2>&1) || rc=$?
   echo "$out" | sed 's/^/  /'
   [ "$rc" -eq 0 ] && ok "cli-update --verify superato (agente della sessione utilizzabile)" \

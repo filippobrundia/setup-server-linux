@@ -186,7 +186,10 @@ CLI_LOG=$HOME/.local/state/ops/cli-update/cli-update.log
 # per ogni agente solo l'ULTIMO esito degli ultimi 8 giorni (un problema superato da una verifica riuscita non resta);
 # il login mancante conta solo per l'agente della sessione (AGENTE; compatibilità: primo nome di AGENTI_CLI)
 SESS=${AGENTE:-}; [ -n "$SESS" ] || { l=${AGENTI_CLI:-}; SESS=${l%% *}; }
-[ -n "$SESS" ] || warn "nessun agente della sessione in host.conf (sceglierlo con: agente)"
+if [ -z "$SESS" ]; then
+  if [ "${AGENTI_LOGIN:-}" = dopo-configurazione ]; then ok "agente non ancora scelto: login previsto dopo la configurazione"
+  else warn "nessun agente della sessione in host.conf (sceglierlo con: agente)"; fi
+fi
 for a in claude codex agy gemini; do
   cli=$(awk -v s="$(date -u -d '-8 days' '+%F')" -v a="cli-update: $a:" '$1 >= s && index($0, a) && /(VERIFICA FALLITA|ERRORE|NON CONFORME|NON AUTENTICATO|verifica OK|ambiente OK|verificato)/' "$CLI_LOG" 2>/dev/null | tail -1)
   case $cli in

@@ -81,6 +81,28 @@ check_rc 3 --esclusioni '10.3'
 check_rc 2 --comando-arbitrario
 if /bin/bash "$PKG/payload/ops/bin/configura-server" --profilo docker >/dev/null 2>&1; then exit 1; fi
 echo 'PASS cambio profilo, esclusioni incompatibili, argomenti arbitrari e root rifiutati'
+# Login differito: server preparato anche senza agente scelto, nessun login/modello.
+printf '\nAGENTI_LOGIN="dopo-configurazione"\n' >> "$C/srv/ops/host.conf"
+sed -i 's/^AGENTE=.*/AGENTE=""/' "$C/srv/ops/host.conf"
+: > "$C/trace"; chown "$U:$U" "$C/trace"
+SIM_LOGIN_RC=1; check_rc 0; SIM_LOGIN_RC=0
+[ "$(cat "$C/trace")" = SUDO_INSTALLER ]
+grep -q 'Nessuna chiamata AI nel setup' "$C/out"
+echo 'PASS setup senza agente scelto e senza login, anche se il login fallirebbe'
+SIM_RC=5; check_rc 5; SIM_RC=0; check_rc 0
+! grep -q LOGIN "$C/trace"
+echo 'PASS ripresa dopo riavvio senza autenticazioni AI'
+cat > "$C/srv/ops/bin/cli-update" <<'EOF'
+#!/bin/bash
+case $1 in --ambiente) echo "ambienti controllati"; exit "${SIM_AMBIENTE_RC:-0}" ;; *) echo LOGIN_NON_PREVISTO; exit 98 ;; esac
+EOF
+chmod +x "$C/srv/ops/bin/cli-update"
+OPS_DIR="$C/srv/ops" /bin/bash "$PKG/payload/ops/docs/bootstrap/verifiche-base.sh" agenti > "$C/env-out"
+grep -q 'senza login' "$C/env-out"
+if OPS_DIR="$C/srv/ops" SIM_AMBIENTE_RC=1 /bin/bash "$PKG/payload/ops/docs/bootstrap/verifiche-base.sh" agenti > "$C/env-out"; then
+ echo 'ambiente non conforme accettato'; exit 1
+fi
+echo 'PASS passo 12.7 verifica ambienti senza modello e blocca un ambiente non conforme'
 # Terminale reale simulato: solo una scelta esplicita apre una chat, dopo installer.
 : > "$C/trace"; chown "$U:$U" "$C/trace"
 printf 'codex\n' | script -q -e -c "runuser -u $U -- env CT=$C OPS_CONFIG_TEST_ROOT=$C /bin/bash $PKG/payload/ops/bin/configura-server" /dev/null > "$C/menu-out" 2>&1

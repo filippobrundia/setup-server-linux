@@ -15,7 +15,7 @@ hardware, versione di Ubuntu, ruolo della macchina, accesso da Internet e rete a
 
 **Configurazione iniziale.** Se `docs/bootstrap/avanzamento.md` contiene la riga `STATO: IN CORSO`, la macchina
 non ha ancora completato la base: segui "Esecuzione unica" in `docs/bootstrap/configurazione-server-base.md`.
-La configurazione iniziale e ora deterministica e indipendente dal modello: @@OWNER@@ esegue `configura-server --profilo base|docker --esclusioni "..."` nel terminale SSH reale. Il programma rileva i dati, compila e registra i parametri, verifica il piano, guida il login dell'agente scelto senza aprire una chat, invoca sudo ops-installa e salva il rapporto. Non reinventare i controlli e non proporre approvazioni una per una. Il modello non esegue sudo e non deve chiedere accessi diagnostici per questa procedura. Dopo un riavvio si rilancia configura-server, che riprende dallo stato persistente. Rapporti in docs/bootstrap/esito-configurazione.md e log in /var/log/ops-installa/.
+La configurazione iniziale e ora deterministica e indipendente dal modello: @@OWNER@@ esegue `configura-server --profilo base|docker --esclusioni "..."` nel terminale SSH reale. Il programma rileva i dati, compila e registra i parametri, verifica il piano, verifica gli ambienti senza autenticazione, invoca sudo ops-installa e salva il rapporto. Non reinventare i controlli e non proporre approvazioni una per una. Il modello non esegue sudo e non deve chiedere accessi diagnostici per questa procedura. Dopo un riavvio si rilancia configura-server, che riprende dallo stato persistente. Rapporti in docs/bootstrap/esito-configurazione.md e log in /var/log/ops-installa/.
 Con esclusioni l'esito è "collaudo locale completato con esclusioni", **non** la validazione per produzione. Gli avvisi di
 `quick-check` sulle parti non ancora configurate sono attesi. Si passa alla gestione ordinaria solo quando il
 collaudo finale (sezione 12) è superato e il file riporta `STATO: COMPLETATO`.
@@ -166,6 +166,14 @@ Quando cambia lo stato reale del sistema (container, config, cron, systemd, rete
 4. Aggiungi una riga a `CHANGELOG.md` (data + descrizione sintetica).
 5. `git commit` in `/srv/ops` con messaggio chiaro (il diff è il dettaglio, il CHANGELOG il riassunto).
 
+Per un nuovo servizio o container, prima di dichiarare il lavoro concluso:
+- crea o aggiorna `docs/services/<nome>.md`: funzione, versione, Compose/unit, avvio e arresto, porte, volumi, dipendenze e recupero;
+- aggiorna `SERVICES` o `CONTAINERS` in `host.conf` quando il servizio deve risultare atteso nel controllo rapido;
+- verifica quali dati persistenti entrano nel backup, aggiorna `docs/storage-backup.md` e prova il ripristino quando cambia la copertura;
+- verifica sistema reale e controlli, poi aggiorna STATUS, CHANGELOG e decisioni e registra in Git;
+- documenta solo i percorsi delle credenziali, mai i loro valori. Non dichiarare coperto dal backup ciò che non hai verificato.
+Gli aggiornamenti dei documenti sono un obbligo operativo dell'agente, non un rilevamento automatico di modifiche fatte fuori dalla sessione.
+
 Anche senza modifiche al server: se in sessione emergono fatti nuovi, decisioni o cose rimandate,
 registrali allo stesso modo prima di chiudere.
 
@@ -195,8 +203,8 @@ registrali allo stesso modo prima di chiudere.
 
 Sono installati sempre quattro agenti, che leggono tutti questo file e lo stesso stato del server (`/srv/ops`,
 `STATUS.md`, Knowledge Base); le conversazioni restano separate, ciascuna nel proprio strumento. L'**agente della
-sessione** è in `host.conf` (`AGENTE`): solo per lui servono il login di @@OWNER@@ e il collaudo operativo (passo 12.7);
-gli altri tre sono verificati nell'ambiente e nella sandbox, senza login. Per cambiarlo, senza reinstallare né perdere
+sessione** è in `host.conf` (`AGENTE`): solo per lui servono il login di @@OWNER@@ e il collaudo operativo dopo la configurazione;
+Il passo 12.7 verifica ambiente e sandbox dei quattro senza login nel flusso automatico. Per cambiarlo, senza reinstallare né perdere
 l'avanzamento, @@OWNER@@ usa il comando `agente` (guida il login solo dell'agente scelto). Un agente senza login, senza
 abbonamento o con quota esaurita non blocca il lavoro: si sceglie un altro. Nessun servizio a pagamento va attivato.
 

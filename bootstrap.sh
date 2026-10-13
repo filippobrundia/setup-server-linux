@@ -59,7 +59,7 @@ BWRAP_PROFILE=/etc/apparmor.d/ops-bwrap
 OLD_BLOCKS="c0304d4d9f830ef5b336f53176ff35e27f00f1039da199f3adaaf17ea06fe42a f479cdbe7662d584c3c4877814223315c5ab6d490dab97e34a11ba4b47a9a458"
 GITHUB_ED25519_FPR=SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU   # pubblicata da GitHub (api.github.com/meta)
 
-ADMIN=${SUDO_USER:-}; OWNER=""; CHECK=0; KBONLY=0; KB_REMOTE=""; KB_ID=""; NO_KB=0; AGENTE=""
+ADMIN=${SUDO_USER:-}; OWNER=""; CHECK=0; KBONLY=0; KB_REMOTE=""; KB_ID=""; NO_KB=0; AGENTE=""; DEFER_LOGIN=0
 while [ $# -gt 0 ]; do
   case $1 in
     --admin) ADMIN=${2:-}; shift 2 ;;
@@ -70,6 +70,7 @@ while [ $# -gt 0 ]; do
     --no-kb) NO_KB=1; shift ;;
     --kb-id) KB_ID=${2:-}; shift 2 ;;
     --agente) AGENTE=${2:-}; shift 2 ;;
+    --login-dopo-configurazione) DEFER_LOGIN=1; shift ;;
     -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
     *) echo "opzione sconosciuta: $1" >&2; exit 2 ;;
   esac
@@ -577,6 +578,14 @@ install -o root -g root -m 0644 "$STAGE/ops/docs/bootstrap/passi-comune.sh" /usr
 [ "$(stat -c '%U:%G %a' /usr/local/bin/ops-host-check)" = "root:root 755" ] && cmp -s "$STAGE/ops/bin/ops-host-check" /usr/local/bin/ops-host-check || die "diagnostico host non conforme"
 [ "$(stat -c '%U:%G %a' /usr/local/lib/ops-bootstrap/rileva-parametri.sh)" = "root:root 644" ] && cmp -s "$STAGE/ops/docs/bootstrap/rileva-parametri.sh" /usr/local/lib/ops-bootstrap/rileva-parametri.sh || die "rilevamento host non conforme"
 
+# Il login degli agenti non e un prerequisito della configurazione del server.
+if [ "$DEFER_LOGIN" = 1 ]; then
+  if grep -q '^AGENTI_LOGIN=' "$OPS/host.conf"; then
+    sed -i 's/^AGENTI_LOGIN=.*/AGENTI_LOGIN="dopo-configurazione"/' "$OPS/host.conf"
+  else printf '\nAGENTI_LOGIN="dopo-configurazione" # login e prova del modello solo dopo il setup\n' >> "$OPS/host.conf"; fi
+  as_admin git -C "$OPS" diff --quiet -- host.conf || as_admin git -C "$OPS" commit -q -m 'Login degli agenti rimandato dopo la configurazione' -- host.conf
+fi
+
 # ============================================================== VERIFY
 log "== VERIFY"
 v_ok=1
@@ -615,7 +624,7 @@ else log "  $INSTALLA o $REF non conformi"; v_ok=0; fi
 [ "$KB_STATE" != scelta ] || log "Knowledge Base: non configurata per scelta (facoltativa; per collegarla: /srv/ops/bin/kb collega)."
 # --- Agente della sessione: una domanda (o --agente), registrata in host.conf; login e collaudo con "agente" ---
 hc_agente() { awk -F= '$1 == "AGENTE" {v = substr($0, index($0, "=") + 1); sub(/[ \t]+#.*$/, "", v); gsub(/"/, "", v); print v}' "$OPS/host.conf" | tail -n 1; }
-if [ -z "$AGENTE" ] && [ -z "$(hc_agente)" ]; then
+if [ "$DEFER_LOGIN" = 0 ] && [ -z "$AGENTE" ] && [ -z "$(hc_agente)" ]; then
   ATTY=${AGENTE_TTY:-/dev/tty}; AOUT=${AGENTE_TTY_OUT:-/dev/tty}
   if [ -r "$ATTY" ] && { [ -n "${AGENTE_TTY:-}" ] || [ -t 0 ] || (: < /dev/tty) 2>/dev/null; }; then
     { echo; echo "Agenti installati: Claude Code (account Anthropic), Codex CLI (account ChatGPT/OpenAI),"
