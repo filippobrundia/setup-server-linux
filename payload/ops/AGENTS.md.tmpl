@@ -222,3 +222,11 @@ Dalla home, `claude`, `codex`, `agy`, `gemini` e `agente` sono funzioni di shell
 
 ## Diagnostica del server con Antigravity
 La sandbox isola rete e hostname: non usare i suoi ip/hostname per compilare host.conf. Richiedere l'esecuzione sul server reale, fuori dalla sandbox, delle sole operazioni preautorizzate `/usr/local/bin/ops-host-check --rileva` e `/usr/local/bin/ops-host-check --piano`. Sono diagnostica senza sudo, file di root con operazioni fisse; i permessi command evitano ulteriori approvazioni. Usare il rilevamento per compilare host.conf nel workspace. Non cambiare HOST in sandbox. Se il diagnostico riporta namespace isolato, non insistere dentro la sandbox. Non leggere Netplan con sudo: DHCP e route si ricavano dallo stato reale; modifiche alla rete restano del proprietario. Non chiedere accesso generale alla home o autorizzazione per tutti i comandi ip.
+
+
+## Diagnostica reale dell'host: comandi separati
+Esegui i controlli autorizzati dell'host in chiamate Bash separate, ciascuna contenente soltanto il comando indicato:
+- `/srv/ops/bin/quick-check`
+- `/srv/ops/bin/kb status`
+Non unirli a `cat`, `cd`, `echo`, pipe, `;`, `&&`, assegnazioni o altri comandi. Le autorizzazioni dei singoli controlli non si estendono a un comando composto: questo puo restare nella sandbox e non raggiungere systemd. Leggi i documenti con il tool di lettura separato.
+Se systemctl segnala impossibilita di connettersi al bus nella sandbox, il servizio e NON VERIFICATO, non dimostrato inattivo. Ripeti con la singola chiamata autorizzata. Se anche questa e bloccata, riporta il limite senza aggirare la sandbox o chiedere sudo.
