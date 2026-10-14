@@ -66,7 +66,9 @@ rollback() {
  exit "$rc"
 }
 trap rollback EXIT
-install -d -o root -g root -m 0755 "$DIR" /var/lib/ops-bootstrap
+install -d -o root -g root -m 0755 "$DIR"
+# Il riferimento di integrita di ops-installa richiede questa cartella root 0700.
+install -d -o root -g root -m 0700 /var/lib/ops-bootstrap
 install -o root -g root -m 0755 "$BASE/claude-bwrap" "$DIR/bwrap"
 install -o root -g root -m 0755 "$BASE/../bin/claude-sandbox-check" "$DIR/check"
 install -o root -g root -m 0644 "$BASE/claude-sandbox-settings.json" "$DIR/settings.json"
