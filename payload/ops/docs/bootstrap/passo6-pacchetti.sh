@@ -249,6 +249,16 @@ elif [ -n "$MASK_PRE" ]; then
   echo "mascheramento preesistente di $TIMER lasciato com'è"
 fi
 
+# ---- SSH_RUNTIME_READY
+# Ubuntu con socket activation puo fermare ssh.service durante apt e rimuovere /run/sshd.
+# Il successivo sshd -t richiede il runtime creato dalla unit: non crearlo a mano.
+if ! systemctl is-active --quiet ssh.service; then
+  systemctl is-active --quiet ssh.socket || die "SSH non attivo dopo i pacchetti: verificare socket e servizio"
+  systemctl start ssh.service || die "impossibile riattivare SSH dopo i pacchetti"
+  systemctl is-active --quiet ssh.service || die "SSH non attivo dopo l'avvio"
+fi
+# ---- SSH_RUNTIME_READY_END
+
 # ---- VERIFY
 echo "== VERIFY"
 rc=0

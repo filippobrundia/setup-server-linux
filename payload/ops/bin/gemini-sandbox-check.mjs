@@ -23,8 +23,8 @@ async function run(command, args) {
     return spawnSync(prepared.program, prepared.args, { cwd: prepared.cwd || workspace, env: prepared.env, encoding: 'utf8', timeout: 30000 });
   } finally { prepared.cleanup?.(); }
 }
-const host = await run('sh', ['-c', 'test -r AGENTS.md && systemctl is-active ssh && journalctl -n 1 --no-pager']);
-if (host.status !== 0) throw new Error(`Lettura server fallita: ${host.stderr}`);
+const host = await run('sh', ['-c', 'test -r AGENTS.md && systemctl show ssh.service --property=LoadState --property=ActiveState && journalctl -n 1 --no-pager']);
+if (host.status !== 0) throw new Error(`Lettura server fallita (codice ${host.status}): ${host.stderr || host.stdout}`);
 console.log(host.stdout.trim());
 const outside = join(process.env.HOME, `.ops-gemini-probe-${process.pid}`);
 if (existsSync(outside)) throw new Error('File prova preesistente');
