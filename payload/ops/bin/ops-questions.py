@@ -46,10 +46,13 @@ def main():
         dirty = not path.exists()
         if args.command == 'sync':
             conf = (args.ops / 'host.conf').read_text(encoding='utf-8')
-            found = re.findall(r'^ESCLUSIONI="([0-9. ]*)"\s*$', conf, re.M)
-            if len(found) != 1:
+            declarations = [line for line in conf.splitlines() if line.startswith('ESCLUSIONI=')]
+            if len(declarations) != 1:
                 raise ValueError('ESCLUSIONI assente o duplicata')
-            for key in found[0].split():
+            found = re.fullmatch(r'ESCLUSIONI="([0-9. ]*)"[ \t]*(?:#.*)?', declarations[0])
+            if found is None:
+                raise ValueError('ESCLUSIONI non valida')
+            for key in found[1].split():
                 if key not in TOPICS:
                     raise ValueError('questione sconosciuta')
                 if key not in records:

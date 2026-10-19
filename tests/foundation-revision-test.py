@@ -72,6 +72,28 @@ class Questions(unittest.TestCase):
         self.runq('sync')
         self.assertEqual(json.loads(self.path().read_text()), {})
 
+    def test_real_host_template_preserves_comment_after_parameter_detection(self):
+        conf = (ROOT / 'payload/ops/host.conf.tmpl').read_text()
+        conf = conf.replace('ESCLUSIONI=""', 'ESCLUSIONI="7.1 10.3 11.2 12.8"')
+        (self.ops / 'host.conf').write_text(conf)
+        self.runq('sync')
+        before = self.path().read_bytes()
+        self.runq('sync')
+        self.assertEqual(before, self.path().read_bytes())
+        self.assertEqual(set(json.loads(before)), {'7.1', '10.3', '11.2', '12.8'})
+
+    def test_duplicate_malformed_declaration_is_rejected(self):
+        (self.ops / 'host.conf').write_text('ESCLUSIONI="10.3" # valida\nESCLUSIONI=invalid\n')
+        self.runq('sync', ok=False)
+
+    def test_comment_removal_workaround_preserves_parameter_value(self):
+        import re
+        conf = (ROOT / 'payload/ops/host.conf.tmpl').read_text().replace('ESCLUSIONI=""', 'ESCLUSIONI="7.1 10.3 11.2 12.8"')
+        conf = re.sub(r'(?m)^(ESCLUSIONI=.*?)[ \t]*#.*$', r'\1', conf)
+        (self.ops / 'host.conf').write_text(conf)
+        self.runq('sync')
+        self.assertEqual(set(json.loads(self.path().read_text())), {'7.1', '10.3', '11.2', '12.8'})
+
 class Maintenance(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
