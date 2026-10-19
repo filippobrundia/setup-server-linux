@@ -1,4 +1,4 @@
-> Revisione locale **0.8.0-dev**, base v0.7.0 congelata. Non pubblicata e non collaudata su VM.
+> Candidato **0.8.0-rc.1**, base v0.7.0 congelata. Pre-release sperimentale: collaudo VM ancora da eseguire.
 > Per questa revisione seguire [COLLAUDO-VM-0.8.0.md](COLLAUDO-VM-0.8.0.md).
 > I comandi pubblici 0.7.0 sotto restano riferiti alla release stabile precedente.
 

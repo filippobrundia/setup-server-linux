@@ -1,10 +1,29 @@
-# Revisione incrementale 0.8.0-dev — collaudo rapido su NUOVA VM
+# Revisione incrementale 0.8.0-rc.1 — collaudo rapido su NUOVA VM
 
 Base: v0.7.0, commit `6267824bca7a60f0b28c04f4614fa6b3ae51ad8a`.
-Branch locale: `foundation/0.8.0-vm`. Non è una release pubblicata né una validazione di produzione.
+Branch locale: `foundation/0.8.0-vm`. Pre-release sperimentale, non una validazione di produzione.
 Non eseguire su server esistenti. Nessun intervento su servern100 autorizzato da questa guida.
 
-## Tre passaggi nella VM
+## Percorso pubblico GitHub — nuova VM
+
+Dalla sessione SSH dell'amministratore normale su una VM pulita, con snapshot e console:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.8.0-rc.1/install.sh | bash -s -- --configura --profilo docker --vm
+```
+
+Usare il comando solo dopo aver verificato che la pre-release v0.8.0-rc.1 e i relativi asset
+siano pubblicati. Il programma verifica SHA256SUMS; per fissare anche l'impronta indipendente
+aggiungere `--sha256` seguito dal valore nella pagina della release.
+Confermare firewall e primo riavvio quando richiesti. Dopo reboot o disconnessione:
+
+```bash
+configura-server
+```
+
+Il percorso pubblico scarica il candidato RC, senza modificare la release v0.7.0.
+
+## Percorso alternativo con archivio copiato nella VM
 
 Preparare una VM Ubuntu Server LTS pulita con console di recupero, snapshot iniziale,
 utente amministratore normale e SSH. Usare Ubuntu 26.04 per confrontarsi con il collaudo precedente;
@@ -15,8 +34,8 @@ e SHA256SUMS forniti con questa revisione. Non usare `curl .../v0.7.0/install.sh
 
 ```bash
 sha256sum -c SHA256SUMS
-tar -xzf setup-server-linux-0.8.0-dev.tar.gz
-cd setup-server-linux-0.8.0-dev
+tar -xzf setup-server-linux-0.8.0-rc.1.tar.gz
+cd setup-server-linux-0.8.0-rc.1
 ```
 
 2. Installare il candidato come amministratore, con password sudo quando richiesta:

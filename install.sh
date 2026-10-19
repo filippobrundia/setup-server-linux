@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh — punto di ingresso pubblico di setup-server-linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.7.0/install.sh \
+#   curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.8.0-rc.1/install.sh \
 #     | bash -s -- --sha256 <IMPRONTA DALLA PAGINA DELLA RELEASE> [--check] [--owner "Nome"] [--knowledge-base-only]
 #                  [--no-kb | --kb-url https://host/percorso]   (Knowledge Base facoltativa: senza opzioni la domanda arriva durante l'avvio)
 #                  [--agente claude|codex|agy|gemini]          (agente della sessione: senza opzione la domanda arriva alla fine)
@@ -12,7 +12,7 @@
 # "sudo bootstrap.sh --admin <questo utente>" (sudo chiede la password). --check: solo controllo, nessuna modifica.
 set -euo pipefail
 REPO=filippobrundia/setup-server-linux
-VERSION=0.7.0
+VERSION=0.8.0-rc.1
 NAME=setup-server-linux-$VERSION
 BASE=https://github.com/$REPO/releases/download/v$VERSION
 
@@ -22,6 +22,7 @@ CONFIGURA=0; CONFARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --configura) CONFIGURA=1; shift ;;
+    --vm) CONFARGS+=(--vm); shift ;;
     --profilo|--esclusioni) [ $# -ge 2 ] || die "manca il valore di $1"; CONFARGS+=("$1" "$2"); shift 2 ;;
     --sha256) WANT=${2:-}; shift 2 ;;
     --check)  ARGS+=(--check); shift ;;
@@ -34,7 +35,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ "$CONFIGURA" = 0 ] && [ "${#CONFARGS[@]}" -gt 0 ]; then die "--profilo e --esclusioni richiedono --configura"; fi
+if [ "$CONFIGURA" = 0 ] && [ "${#CONFARGS[@]}" -gt 0 ]; then die "--profilo, --esclusioni e --vm richiedono --configura"; fi
 if [ "$CONFIGURA" = 1 ]; then
   for a in "${ARGS[@]}"; do case $a in --check|--knowledge-base-only) die "--configura non si combina con $a" ;; esac; done
 fi
