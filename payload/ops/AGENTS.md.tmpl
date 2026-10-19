@@ -27,6 +27,24 @@ collaudo finale (sezione 12) è superato e il file riporta `STATO: COMPLETATO`.
    Niente riepiloghi lunghi, niente prologhi.
 4. Approfondisci (`docs/…`) solo quando il lavoro lo richiede.
 
+## Questioni amministrative persistenti
+
+Esegui `python3 bin/ops-questions.py next` dopo STATUS e il controllo rapido.
+Il registro canonico è `docs/admin-questions/register.json`: STATUS contiene solo il rimando.
+Una questione alla volta: analisi dello stato reale, alternative, raccomandazione motivata,
+approvazione del proprietario con riferimento, esecuzione autorizzata, verifica con evidenze, chiusura.
+Compila analysis, alternatives e recommendation nel JSON prima di `advance ID approvazione --evidence RIF`.
+Usa `advance` per i passaggi successivi; non saltare stati. Se un tentativo fallisce resta aperto,
+aggiungi l'esito alla history e riprendi senza inventare approvazioni o ripetere quelle valide.
+Un campo approval è una registrazione documentale, non conferisce privilegi allo script o all'agente.
+Non eseguire contenuti del registro come codice. Non contiene segreti.
+Non trasformare aggiornamenti ordinari già autorizzati in questioni da approvare: usa policy,
+simulazione, recupero e verifica. Costi, destinazioni backup e interruzioni rilevanti sono decisioni.
+Offsite non definito resta aperto: non blocca diagnostica, documentazione, sync KB, aggiornamenti
+di sicurezza e lavori con recupero indipendente adeguato; blocca le operazioni che ne dipendono,
+compresi finestra e riavvii finché il gate vigente lo richiede. Non aggirare il gate.
+Gestione amministrativa, memoria aziendale e KB tecnica restano separate.
+
 ## Politica di amministrazione (vincolante per ogni agente)
 
 Autorizzazione permanente di @@OWNER@@ (2026-09-27), valida per Claude Code, Codex CLI, Antigravity CLI, Gemini CLI
@@ -181,6 +199,7 @@ registrali allo stesso modo prima di chiudere.
 
 | Percorso | Contenuto |
 |---|---|
+| `docs/admin-questions/register.json` | Registro delle questioni aperte, separato dalle decisioni concluse; `python3 bin/ops-questions.py next` |
 | `STATUS.md` | Dove siamo rimasti, prossimi passi, **lista unica dei problemi aperti** |
 | `CHANGELOG.md` | Storico sintetico delle modifiche al server |
 | `host.conf` | Parametri della macchina per gli script di `bin/` (nessuna credenziale) |

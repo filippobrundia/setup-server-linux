@@ -13,13 +13,14 @@ RILEVA=$T/usr/local/lib/ops-bootstrap/rileva-parametri.sh
 HOSTCHECK=$T/usr/local/bin/ops-host-check
 INSTALLA=$T/usr/local/sbin/ops-installa
 AGENTE_CMD=$OPS/bin/agente
-PROF=""; ESCL=""; ESCL_SET=0; PREPARA=0
-usage() { echo 'Uso: configura-server [--profilo base|docker] [--esclusioni "7.1 10.3 11.2 12.8"] [--prepara]'; }
+PROF=""; ESCL=""; ESCL_SET=0; PREPARA=0; VM=0
+usage() { echo 'Uso: configura-server [--profilo base|docker] [--esclusioni "7.1 10.3 11.2 12.8"] [--prepara] [--vm]'; }
 while [ $# -gt 0 ]; do
  case $1 in
   --profilo) [ $# -ge 2 ] || { usage; exit 2; }; PROF=$2; shift 2 ;;
   --esclusioni) [ $# -ge 2 ] || { usage; exit 2; }; ESCL=$2; ESCL_SET=1; shift 2 ;;
   --prepara) PREPARA=1; shift ;;
+  --vm) VM=1; shift ;;
   -h|--help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
  esac
@@ -40,6 +41,12 @@ OLDPROF=$(hc PROFILO)
 [ -z "$OLDPROF" ] || [ "$OLDPROF" = "$PROF" ] || { echo 'Profilo gia registrato: non cambiarlo durante la ripresa.' >&2; exit 3; }
 case $PROF in base|docker) ;; *) echo 'Serve il profilo: configura-server --profilo base|docker (piu eventuali esclusioni).' >&2; exit 3 ;; esac
 if [ "$ESCL_SET" = 0 ]; then ESCL=$(hc ESCLUSIONI); fi
+if [ "$VM" = 1 ]; then
+ [ "$ESCL_SET" = 0 ] || { echo '--vm non si combina con --esclusioni'; exit 3; }
+ systemd-detect-virt --vm --quiet || { echo '--vm richiede una VM rilevata'; exit 3; }
+ ESCL='7.1 10.3 11.2 12.8'
+ echo 'Collaudo VM: rete stabile, offsite, monitoraggio e finestra restano questioni aperte. Nessuna certificazione produzione.'
+fi
 for e in $ESCL; do case $e in 2|7.1|10.3|11.2|12.8) ;; *) echo "Esclusione non ammessa: $e" >&2; exit 3 ;; esac; done
 if [[ " $ESCL " == *' 10.3 '* ]] && [[ " $ESCL " != *' 12.8 '* ]]; then echo '10.3 esclusa richiede anche 12.8 esclusa.' >&2; exit 3; fi
 # Blocco per l'intera preparazione: nessuna modifica contemporanea a parametri e decisioni.
@@ -55,6 +62,11 @@ if ! grep -Fq "$MARK" "$DEC"; then
  if [[ " $ESCL " == *' 10.3 '* ]]; then
   printf '10.3 esclusa: copia remota mancante, gate e manutenzione automatica bloccati.\n' >> "$DEC"
  fi
+fi
+python3 "$OPS/bin/ops-questions.py" --ops "$OPS" sync
+git -C "$OPS" add docs/admin-questions/register.json
+if ! git -C "$OPS" diff --cached --quiet -- docs/admin-questions/register.json; then
+ git -C "$OPS" commit -m 'Registro delle questioni amministrative da decidere' -- docs/admin-questions/register.json
 fi
 git -C "$OPS" add host.conf docs/decisions.md
 if ! git -C "$OPS" diff --cached --quiet -- host.conf docs/decisions.md; then git -C "$OPS" commit -m 'Parametri della configurazione deterministica' -- host.conf docs/decisions.md; fi
@@ -111,6 +123,8 @@ fi
  printf '\nData UTC: %s\nProfilo: %s\nEsclusioni: %s\nCodice reale installer: %s\nCodice finale procedura: %s\n' "$(date -u +%FT%TZ)" "$PROF" "$ESCL" "$INSTALL_RC" "$rc"
  grep -m1 '^STATO:' "$OPS/docs/bootstrap/avanzamento.md" || true
  printf '\nKnowledge Base: %s\n' "$KB_ESITO"
+ echo; echo 'Questioni aperte (non completate dalla fine del setup):'
+ python3 "$OPS/bin/ops-questions.py" --ops "$OPS" report
  echo; echo 'Log e stato: /var/log/ops-installa/. Le esclusioni non sono prove superate.'
  echo; "$OPS/bin/quick-check" || true
 } > "$REPORT"

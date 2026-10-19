@@ -40,6 +40,8 @@ load_conf() {
     [ "$(stat -c %U "$CONF")" = root ] && [ $(( 0$(stat -c %a "$CONF") & 022 )) = 0 ] \
       || { echo "$CONF deve essere di root e non scrivibile da altri" >&2; exit 2; }
   fi
+  AUTO_UPGRADES=$(conf_get AUTO_UPGRADES)
+  case $AUTO_UPGRADES in yes|no|'') ;; *) echo 'AUTO_UPGRADES non valido' >&2; exit 2 ;; esac
   ADMIN=$(conf_get ADMIN); QUICK=$(conf_get QUICK_CHECK)
   UBUNTU_VERSION=$(conf_get UBUNTU_VERSION); CODENAME=$(conf_get UBUNTU_CODENAME)
   REQUIRED_UNITS=$(conf_get REQUIRED_UNITS); EXTRA_ORIGINS=$(conf_get EXTRA_ORIGINS_RE)
@@ -100,8 +102,10 @@ safe_input() {
 # Controllo di salute (dischi, servizi, Docker, tunnel, backup) eseguito come utente normale.
 # Esce 0 se sano; stampa il motivo ed esce 1 se c'è un ERRORE o un problema nei backup.
 health() {
-  local out
-  if [ "$(id -u)" = 0 ]; then out=$(runuser -u "$ADMIN" -- "$QUICK" --gate 2>&1); else out=$("$QUICK" --gate 2>&1); fi
+  local out rc=0
+  if [ "$(id -u)" = 0 ]; then out=$(runuser -u "$ADMIN" -- "$QUICK" --gate 2>&1) || rc=$?
+  else out=$("$QUICK" --gate 2>&1) || rc=$?; fi
+  [ "$rc" = 0 ] || { echo "quick-check non superato (codice $rc): $out"; return 1; }
   local bad; bad=$( { grep 'ERRORE' <<< "$out"; sed -n '/^Backup/,/^[A-Z]/p' <<< "$out" | grep 'ATTENZIONE'; } | sed 's/^ *//' | paste -sd';')
   [ -z "$bad" ] || { echo "$bad"; return 1; }
 }
@@ -113,9 +117,29 @@ net_fingerprint() {  # configurazione di rete generata (netplan → networkd/Net
 
 # --- Aggiornamenti approvati: validazione completa prima di toccare qualcosa ---
 PKGS=()
+# Seleziona solo upgrade di pacchetti installati. Nessuna chiamata AI o nuova approvazione umana.
+# Il piano viene rivalidato integralmente da validate_list prima dell'esecuzione.
+select_routine() {
+  [ "$AUTO_UPGRADES" = yes ] || return 0
+  [ ! -e "$INBOX/approved-upgrades" ] || return 0
+  local sim p v status list=""
+  sim=$(apt-get -s upgrade --no-install-recommends 2>&1) || defer 'simulazione aggiornamenti ordinari fallita'
+  grep -q '^Remv' <<< "$sim" && defer 'simulazione ordinaria contiene rimozioni'
+  while read -r p; do
+    [ -n "$p" ] || continue
+    [[ "$p" =~ ^[a-z0-9][a-z0-9.+-]{0,99}$ ]] || defer 'pacchetto non supportato nel piano ordinario'
+    status=$(dpkg-query -W -f='${db:Status-Abbrev}' "$p" 2>/dev/null)
+    [ "${status:0:2}" = ii ] || defer 'piano ordinario introduce nuovi pacchetti'
+    v=$(apt-cache policy "$p" | awk '/Candidate:/ {print $2}')
+    list+="$p=$v"$'\n'
+  done < <(awk '/^Inst / {print $2}' <<< "$sim")
+  [ -n "$list" ] || return 0
+  # Lo stato dry-run vive solo in memoria: nessuna scrittura in inbox.
+  AUTO_LIST=$list
+}
 validate_list() {
   local line n=0 p v inst cand sim
-  safe_input "$INBOX/approved-upgrades" || return 0
+  [ -n "${AUTO_LIST:-}" ] || { safe_input "$INBOX/approved-upgrades" || return 0; }
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
     [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
@@ -128,9 +152,15 @@ validate_list() {
     cand=$(apt-cache policy "$p" | awk '/Candidate:/ {print $2}')
     [ "$cand" = "$v" ] || defer "$p: approvato $v, candidato attuale $cand (serve una nuova valutazione)"
     PKGS+=("$p=$v")
-  done < "$INBOX/approved-upgrades"
+  done < <(if [ -n "${AUTO_LIST:-}" ]; then printf '%s' "$AUTO_LIST"; else cat "$INBOX/approved-upgrades"; fi)
   [ "${#PKGS[@]}" -gt 0 ] || return 0
   sim=$(apt-get -s install --only-upgrade -o DPkg::Lock::Timeout=0 "${PKGS[@]}" 2>&1) || defer "simulazione non riuscita: $(tail -1 <<< "$sim")"
+  # Dipendenze nuove o aggiornamenti non previsti richiedono un piano separato.
+  local item
+  while read -r item; do
+    [ -n "$item" ] || continue
+    [[ " ${PKGS[*]} " == *" $item="* ]] || { hold 'simulazione modifica pacchetti fuori dal piano'; exit 1; }
+  done < <(awk '/^Inst / {print $2}' <<< "$sim")
   grep -q '^Remv' <<< "$sim" && { hold "la simulazione rimuove pacchetti: $(grep '^Remv' <<< "$sim" | cut -d' ' -f2 | paste -sd' ')"; exit 1; }
   local foreign; foreign=$(grep '^Inst' <<< "$sim" | grep -vE "\(\S+ $ORIGINS_RE" | cut -d' ' -f2 | paste -sd' ')
   [ -z "$foreign" ] || { hold "origine non ammessa per: $foreign"; exit 1; }
@@ -142,7 +172,7 @@ save_rollback() {  # scarica i .deb delle versioni installate, se il repository 
     p=${pv%%=*}; v=$(dpkg-query -W -f='${Version}' "$p")
     if compgen -G "$ROLLBACK/*/${p}_${v//:/%3a}_*.deb" >/dev/null; then log "rollback disponibile: $p $v"; continue; fi
     if (cd "$d" && apt-get download "$p=$v" >/dev/null 2>&1); then log "rollback disponibile: $p $v"
-    else log "rollback NON disponibile per $p $v (versione non più nel repository)"; fi
+    else log "rollback NON disponibile per $p $v (versione non più nel repository)"; return 1; fi
   done
 }
 
@@ -182,6 +212,7 @@ mode_window() {
     [ "$DRY" = 1 ] || { log "finestra non approvata: nessuna azione"; exit 0; }
     log "DRY_RUN: finestra non approvata, controllo comunque le condizioni"
   fi
+  select_routine
   validate_list
   local need_reboot=0; [ -e "$REBOOT_FLAG" ] && need_reboot=1
   [ "${#PKGS[@]}" = 0 ] && [ "$need_reboot" = 0 ] && { log "niente da fare"; exit 0; }
@@ -208,11 +239,11 @@ mode_window() {
     if [ "$DRY" = 1 ]; then log "DRY_RUN: installerei ${PKGS[*]}"
     else
       dpkg-query -W -f='${Package} ${Version}\n' > "$STATE/window-before.txt"
-      save_rollback
+      save_rollback || defer "recupero dei pacchetti precedenti incompleto: nessun aggiornamento"
       log "installo: ${PKGS[*]}"
       if DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y --only-upgrade \
            -o DPkg::Lock::Timeout=900 -o Dpkg::Options::=--force-confold "${PKGS[@]}" >> "$STATE/apt-window.log" 2>&1; then
-        mv -f "$INBOX/approved-upgrades" "$INBOX/approved-upgrades.done-$(date -u +%Y%m%d%H%M)"
+        [ -n "${AUTO_LIST:-}" ] || mv -f "$INBOX/approved-upgrades" "$INBOX/approved-upgrades.done-$(date -u +%Y%m%d%H%M)"
         log "installati; verifica dei servizi"
         if ! why=$(wait_healthy 10); then
           log "servizi non sani dopo l'aggiornamento: $why"
@@ -220,7 +251,13 @@ mode_window() {
           hold "servizi non sani dopo l'aggiornamento e ripristino non riuscito: $why"; exit 1
         fi
       else
-        hold "apt-get install fallito (vedi $STATE/apt-window.log); nessun riavvio"; exit 1
+        log "apt-get install fallito: provo il recupero delle versioni precedenti"
+        if restore_rollback && wait_healthy 10 >/dev/null; then
+          hold "apt fallito; versioni precedenti ripristinate e salute verificata; nessun riavvio"
+        else
+          hold "apt fallito; recupero non dimostrato, verificare $STATE/apt-window.log; nessun riavvio"
+        fi
+        exit 1
       fi
     fi
     [ -e "$REBOOT_FLAG" ] && need_reboot=1

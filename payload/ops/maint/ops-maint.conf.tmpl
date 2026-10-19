@@ -13,3 +13,7 @@ REQUIRED_UNITS=ssh.socket|ssh.service
 EXTRA_ORIGINS_RE=
 # Processi aggiuntivi che rinviano la finestra (espressione regolare sugli argomenti), es. /usr/local/bin/mio-job
 EXTRA_BUSY_ARG_RE=
+# Nuove installazioni: selezione deterministica degli aggiornamenti ordinari Ubuntu.
+# Non abilita timer, finestra o riavvii; gli altri prerequisiti restano obbligatori.
+# Configurazioni preesistenti senza questa chiave mantengono il comportamento manuale.
+AUTO_UPGRADES=yes

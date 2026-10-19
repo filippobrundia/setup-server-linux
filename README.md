@@ -1,3 +1,7 @@
+> Revisione locale **0.8.0-dev**, base v0.7.0 congelata. Non pubblicata e non collaudata su VM.
+> Per questa revisione seguire [COLLAUDO-VM-0.8.0.md](COLLAUDO-VM-0.8.0.md).
+> I comandi pubblici 0.7.0 sotto restano riferiti alla release stabile precedente.
+
 # setup-server-linux
 
 Prepara un **Ubuntu Server LTS appena installato** per l'amministrazione con agenti, applicando la base collaudata

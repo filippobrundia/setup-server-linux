@@ -136,8 +136,8 @@ cmd_enable() {
       systemctl enable --now ops-maint-window.timer
       grep -qx 'APPROVED=yes' "$INBOX/window.conf" || echo "  nota: finché window.conf non contiene APPROVED=yes la finestra non fa nulla" ;;
     cli-update)
-      runuser -u "$ADMIN" -- /srv/ops/bin/cli-update --verify \
-        || die "verifica degli agenti non superata (agente della sessione: login, sandbox o caricamento di AGENTS.md): timer non attivati"
+      runuser -u "$ADMIN" -- /srv/ops/bin/cli-update --ambiente \
+        || die "ambiente e sandbox degli agenti non conformi: timer non attivati"
       /usr/local/sbin/ops-agy verify >/dev/null || die "Antigravity (ops-agy verify) non conforme: timer non attivati"
       systemctl enable --now ops-cli-update.timer ops-agy-update.timer ;;
     *) die "enable: postboot | window | cli-update" ;;

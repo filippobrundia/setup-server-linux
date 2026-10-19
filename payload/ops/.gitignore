@@ -1,3 +1,5 @@
 # repository Git indipendente (Knowledge Base condivisa), gestito con bin/kb
 knowledge-base/
 knowledge-base.v0.2.0-*/
+docs/admin-questions/.lock
+docs/admin-questions/.register.tmp

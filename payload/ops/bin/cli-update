@@ -155,10 +155,10 @@ update_npm() {  # $1 = comando, $2 = pacchetto npm, $3 = dist-tag di riferimento
   in_use "$1" && { log "$1: $cur -> $target rinviato, programma in uso"; return 0; }
   [ "$DRY" = 1 ] && { log "$1: DRY_RUN, aggiornerei $cur -> $target"; return 0; }
   log "$1: aggiorno $cur -> $target"
-  # dopo l'aggiornamento: ambiente e sandbox sempre; AGENTS.md solo se il login c'è (gli altri non si autenticano)
-  if npm install -g --no-fund --no-audit "$2@$target" >> "$WORK/npm.log" 2>&1 && m=$(ambiente "$1") \
-     && { ! auth_ok "$1" || smoke "$1"; }; then
-    log "$1: $target verificato (ambiente e sandbox conformi$(auth_ok "$1" && echo ', AGENTS.md caricato'))"
+  # Il timer non chiama modelli: verifica deterministica, senza sessioni/login AI.
+  # Il collaudo runtime e del contesto resta --verify, esplicito e separato.
+  if npm install -g --no-fund --no-audit "$2@$target" >> "$WORK/npm.log" 2>&1 && m=$(ambiente "$1"); then
+    log "$1: $target verificato (ambiente e sandbox conformi; contesto runtime non verificato)"
   else
     log "$1: VERIFICA FALLITA su $target${m:+ ($m)}, ripristino $cur (dettagli in $WORK)"
     npm install -g --no-fund --no-audit "$2@$cur" >> "$WORK/npm.log" 2>&1 && log "$1: ripristinato $cur" \

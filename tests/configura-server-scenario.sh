@@ -11,6 +11,7 @@ cp "$PKG/payload/ops/docs/bootstrap/ops-installa" "$C/usr/local/sbin/ops-install
 cp "$PKG/payload/ops/docs/bootstrap/passi-comune.sh" "$C/srv/ops/docs/bootstrap/"
 cp "$PKG/payload/ops/host.conf.tmpl" "$C/srv/ops/host.conf"
 cp "$PKG/payload/ops/bin/memoria-iniziale.py" "$C/srv/ops/bin/"
+cp "$PKG/payload/ops/bin/ops-questions.py" "$C/srv/ops/bin/"
 sed "s/@@HOST@@/$(hostname -s)/g;s/@@ADMIN@@/$U/g" "$PKG/payload/ops/AGENTS.md.tmpl" > "$C/srv/ops/AGENTS.md"
 sed -i "s/@@HOST@@/$(hostname -s)/g;s/@@ADMIN@@/$U/g;s/^AGENTE=.*/AGENTE=\"agy\"/" "$C/srv/ops/host.conf"
 printf '# Decisioni\n' > "$C/srv/ops/docs/decisions.md"
