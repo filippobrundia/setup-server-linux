@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh — punto di ingresso pubblico di setup-server-linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.8.0-rc.1/install.sh \
+#   curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.8.0-rc.2/install.sh \
 #     | bash -s -- --sha256 <IMPRONTA DALLA PAGINA DELLA RELEASE> [--check] [--owner "Nome"] [--knowledge-base-only]
 #                  [--no-kb | --kb-url https://host/percorso]   (Knowledge Base facoltativa: senza opzioni la domanda arriva durante l'avvio)
 #                  [--agente claude|codex|agy|gemini]          (agente della sessione: senza opzione la domanda arriva alla fine)
@@ -12,7 +12,7 @@
 # "sudo bootstrap.sh --admin <questo utente>" (sudo chiede la password). --check: solo controllo, nessuna modifica.
 set -euo pipefail
 REPO=filippobrundia/setup-server-linux
-VERSION=0.8.0-rc.1
+VERSION=0.8.0-rc.2
 NAME=setup-server-linux-$VERSION
 BASE=https://github.com/$REPO/releases/download/v$VERSION
 
@@ -52,8 +52,9 @@ echo "== scarico $NAME"
 curl -fsSL --proto '=https' -o "$TMP/$NAME.tar.gz" "$BASE/$NAME.tar.gz"
 curl -fsSL --proto '=https' -o "$TMP/SHA256SUMS" "$BASE/SHA256SUMS"
 GOT=$(sha256sum "$TMP/$NAME.tar.gz" | cut -d' ' -f1)
-SUM=$(awk -v f="$NAME.tar.gz" '$2 == f || $2 == "*" f {print $1}' "$TMP/SHA256SUMS")
-[ -n "$SUM" ] && [ "$GOT" = "$SUM" ] || die "l'archivio non corrisponde a SHA256SUMS della release"
+SUM=$(awk -v f="$NAME.tar.gz" '{sub(/\r$/, "")} $2 == f || $2 == "*" f {print $1}' "$TMP/SHA256SUMS")
+[[ "$SUM" =~ ^[0-9a-f]{64}$ ]] && [ "$GOT" = "$SUM" ] \
+  || die "l'archivio non corrisponde a SHA256SUMS della release (calcolato: $GOT; atteso: ${SUM:-(voce assente)})"
 if [ -n "$WANT" ]; then
   [ "$GOT" = "$WANT" ] || die "impronta diversa da quella indicata con --sha256 ($GOT)"
   echo "   integrità verificata: $GOT (impronta pubblicata e SHA256SUMS)"

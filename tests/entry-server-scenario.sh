@@ -2,6 +2,7 @@
 # Test del punto d'ingresso unico con sudo e agente simulati, terminale reale.
 set -euo pipefail
 PKG=${PKG:-/pkg}
+export ENTRY_TEST_VERSION=$(cat "$PKG/VERSION")
 id tester >/dev/null 2>&1 || useradd -m -s /bin/bash tester
 usermod -aG sudo tester
 mkdir -p /srv/ops/bin /srv/ops/docs/bootstrap /usr/local/lib/ops-bootstrap /home/tester/.npm-global/bin
@@ -12,6 +13,7 @@ cp "$PKG/payload/ops/docs/bootstrap/"{rileva-parametri.sh,passi-comune.sh} /usr/
 chmod 755 /usr/local/bin/configura-server /usr/local/bin/ops-host-check /usr/local/sbin/ops-installa
 cp "$PKG/payload/ops/host.conf.tmpl" /srv/ops/host.conf
 cp "$PKG/payload/ops/bin/memoria-iniziale.py" /srv/ops/bin/
+cp "$PKG/payload/ops/bin/ops-questions.py" /srv/ops/bin/
 sed "s/@@HOST@@/$(hostname -s)/g;s/@@ADMIN@@/tester/g" "$PKG/payload/ops/AGENTS.md.tmpl" > /srv/ops/AGENTS.md
 printf 'KB_SCELTA="no"\n' > /srv/ops/kb.conf
 sed -i "s/@@HOST@@/$(hostname -s)/g;s/@@ADMIN@@/tester/g;s/^AGENTE=.*/AGENTE=\"agy\"/" /srv/ops/host.conf
@@ -57,16 +59,16 @@ echo 'PASS ingresso locale: un comando, TTY conservato, nessuna chat'
 grep -q 'Configurazione iniziale verificata' /srv/ops/docs/overview.md
 ! grep -q 'Da compilare al termine' /srv/ops/AGENTS.md
 echo 'PASS ingresso locale compila realmente la memoria nella fixture'
-mkdir -p /tmp/entry-archive/setup-server-linux-0.7.0
-cp "$PKG/bootstrap.sh" /tmp/entry-archive/setup-server-linux-0.7.0/
-chmod 755 /tmp/entry-archive/setup-server-linux-0.7.0/bootstrap.sh
-tar -czf /tmp/entry-test.tar.gz -C /tmp/entry-archive setup-server-linux-0.7.0
+mkdir -p /tmp/entry-archive/setup-server-linux-${ENTRY_TEST_VERSION}
+cp "$PKG/bootstrap.sh" /tmp/entry-archive/setup-server-linux-${ENTRY_TEST_VERSION}/
+chmod 755 /tmp/entry-archive/setup-server-linux-${ENTRY_TEST_VERSION}/bootstrap.sh
+tar -czf /tmp/entry-test.tar.gz -C /tmp/entry-archive setup-server-linux-${ENTRY_TEST_VERSION}
 h=$(sha256sum /tmp/entry-test.tar.gz); h=${h%% *}
-printf '%s  setup-server-linux-0.7.0.tar.gz\n' "$h" > /tmp/entry-test-SHA256SUMS
+printf '%s  setup-server-linux-${ENTRY_TEST_VERSION}.tar.gz\n' "$h" > /tmp/entry-test-SHA256SUMS
 cat > /home/tester/.npm-global/bin/curl <<'EOF'
 #!/bin/bash
 while [ $# -gt 0 ]; do case $1 in -o) dst=$2; shift 2 ;; http*) url=$1; shift ;; *) shift ;; esac; done
-case $url in */setup-server-linux-0.7.0.tar.gz) cp /tmp/entry-test.tar.gz "$dst" ;; */SHA256SUMS) cp /tmp/entry-test-SHA256SUMS "$dst" ;; *) exit 93 ;; esac
+case $url in */setup-server-linux-${ENTRY_TEST_VERSION}.tar.gz) cp /tmp/entry-test.tar.gz "$dst" ;; */SHA256SUMS) cp /tmp/entry-test-SHA256SUMS "$dst" ;; *) exit 93 ;; esac
 EOF
 chmod 755 /home/tester/.npm-global/bin/curl
 runuser -u tester -- sh -c ': > /home/tester/entry-trace'
