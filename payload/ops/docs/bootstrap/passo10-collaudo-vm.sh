@@ -19,7 +19,9 @@ cleanup() {
   exit "$rc"
 }
 trap cleanup EXIT
-mkdir "$WORK/source" "$WORK/restore" "$WORK/cache" "$WORK/security"
+mkdir "$WORK/source" "$WORK/restore" "$WORK/cache" "$WORK/security" "$WORK/home" "$WORK/runtime" "$WORK/state" "$WORK/config-home"
+export HOME="$WORK/home" XDG_CACHE_HOME="$WORK/cache" XDG_CONFIG_HOME="$WORK/config-home"
+export XDG_RUNTIME_DIR="$WORK/runtime" XDG_STATE_HOME="$WORK/state" TMPDIR="$WORK"
 export BORG_CACHE_DIR="$WORK/cache" BORG_SECURITY_DIR="$WORK/security"
 export BORG_BASE_DIR="$WORK" BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK=yes
 printf 'Dati sintetici foundation: prima versione\n' > "$WORK/source/prova.txt"
@@ -38,7 +40,7 @@ borg init --encryption=none "$WORK/repo"
 backup() { borgmatic -c "$CONF" --verbosity 1 create >> "$WORK/backup.log" 2>&1; }
 restore_check() {
   borgmatic -c "$CONF" extract --archive latest --destination "$WORK/restore"
-  python3 - "$WORK" <<'CHECK'
+  python3 -I - "$WORK" <<'CHECK'
 from pathlib import Path
 import os, stat, sys
 w=Path(sys.argv[1]); src=w/'source'; dst=w/'restore'/str(src).lstrip('/')

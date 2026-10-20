@@ -5,7 +5,7 @@ PKG=${PKG:-/pkg}
 HELPER=$PKG/payload/ops/docs/bootstrap/passo10-collaudo-vm.sh
 before=$(find /var/tmp -maxdepth 1 -name 'ops-backup-vm-*' | sort)
 snapshot() {
- for d in /etc/cron.d /etc/borgmatic /etc/logrotate.d; do
+ for d in /etc/cron.d /etc/borgmatic /etc/logrotate.d /root/.cache/borgmatic /root/.local/state/borgmatic; do
   if [ -e "$d" ]; then find "$d" -type f -exec sha256sum {} +; fi
  done | sort
 }
