@@ -294,8 +294,10 @@ cmd_publish() {
     append_only_check "origin/$KB_BRANCH" HEAD || die "la pubblicazione non è una pura aggiunta di record: interrotta"
     if remote_git push -q origin "HEAD:$KB_BRANCH" 2>/tmp/kb-push.$$; then
       rm -f /tmp/kb-push.$$; date -u +%s > "$(STATE)"; cmd_index; echo "pubblicato: $id ($(g rev-parse --short HEAD))"; return 0; fi
-    if grep -qE 'rejected|non-fast-forward|fetch first' /tmp/kb-push.$$; then
-      say "il repository remoto è avanzato (altro server): recupero e nuovo tentativo $n/3"; remote_git fetch -q origin "$KB_BRANCH" || true
+    # Anche l'hook locale puo rifiutare un push quando un altro server e appena avanzato,
+    # prima che Git produca il messaggio inglese "rejected". Verificare lo stato remoto.
+    if remote_git fetch -q origin "$KB_BRANCH" && [ "$(g rev-list --count "HEAD..origin/$KB_BRANCH")" -gt 0 ]; then
+      say "il repository remoto è avanzato (altro server): recupero e nuovo tentativo $n/3"
     else rm -f /tmp/kb-push.$$; die "push non riuscito; il record resta come commit locale"; fi
   done
   rm -f /tmp/kb-push.$$; die "push respinto 3 volte: il record resta come commit locale; riprovare con kb publish dopo kb sync"

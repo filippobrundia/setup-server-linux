@@ -20,6 +20,15 @@ Con esclusioni l'esito è "collaudo locale completato con esclusioni", **non** l
 `quick-check` sulle parti non ancora configurate sono attesi. Si passa alla gestione ordinaria solo quando il
 collaudo finale (sezione 12) è superato e il file riporta `STATO: COMPLETATO`.
 
+**Dopo la foundation:** `FOUNDATION_ONLY="yes"` separa la base dall'amministrazione completa.
+La fine della base non certifica backup, offsite o produzione. Prima di nuovo lavoro leggi
+STATUS, rapporto finale e `python3 bin/ops-questions.py next`. Affronta le decisioni una alla volta;
+non ripetere il bootstrap e non chiedere conferme per manutenzione ordinaria gia autorizzata.
+Le anomalie tecniche osservate (per esempio finalrd allo spegnimento) sono attivita nel registro:
+analizza la causa reale e correggi entro policy, senza disabilitare servizi per nascondere errori.
+I task kind=attivita non richiedono una nuova approvazione umana se gia coperti dalla policy;
+un rischio concreto o un cambio di privilegi/rete interrompe l'esecuzione e richiede decisione.
+
 **Gestione ordinaria:**
 1. Leggi `STATUS.md` (dove siamo rimasti + problemi aperti). Non leggere altro finché non serve.
 2. Esegui il controllo rapido `/srv/ops/bin/quick-check` (sola lettura, senza sudo; vedi `docs/runbooks/controllo-rapido.md`).

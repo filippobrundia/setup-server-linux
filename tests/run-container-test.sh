@@ -4,5 +4,8 @@
 set -euo pipefail
 PKG=$(cd "$(dirname "$0")/.." && pwd)
 IMAGE=${IMAGE:-ubuntu:24.04}
-docker run --rm --name setup-server-linux-test --hostname testsrv -v "$PKG:/pkg:ro" "$IMAGE" \
-  bash -c 'apt-get update -qq >/dev/null && bash /pkg/tests/scenario.sh'
+SNAPSHOT=$(mktemp -d)
+trap 'rm -rf -- "$SNAPSHOT"' EXIT
+python3 "$PKG/tests/package-snapshot.py" "$PKG" "$SNAPSHOT/source.tar"
+docker run --rm --name setup-server-linux-test --hostname testsrv -v "$SNAPSHOT/source.tar:/candidate.tar:ro" "$IMAGE" \
+  bash -c 'mkdir /pkg && tar -xf /candidate.tar -C /pkg && apt-get update -qq >/dev/null && bash /pkg/tests/scenario.sh'

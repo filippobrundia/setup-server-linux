@@ -24,5 +24,6 @@ AGENTE=""                   # agente della sessione: claude | codex | agy (Antig
                             # installati e verificati nell'ambiente; login e collaudo operativo (12.7) solo per questo.
 # Configurazione iniziale con ops-installa (docs/bootstrap/configurazione-server-base.md, "Esecuzione unica"):
 # dichiarati PRIMA di iniziare, proposti da docs/bootstrap/rileva-parametri.sh.
+FOUNDATION_ONLY="no"       # yes: decisioni backup/rete/offsite/monitoraggio/finestra dopo la base
 PROFILO=""                  # base (senza container) | docker (base + passo 8)
 ESCLUSIONI=""               # passi esclusi per decisione, separati da spazi, tra: 2 7.1 10.3 11.2 12.8

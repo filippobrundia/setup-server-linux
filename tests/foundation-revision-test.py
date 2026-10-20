@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import importlib.util
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / 'payload/ops/bin/ops-questions.py'
@@ -93,6 +94,30 @@ class Questions(unittest.TestCase):
         (self.ops / 'host.conf').write_text(conf)
         self.runq('sync')
         self.assertEqual(set(json.loads(self.path().read_text())), {'7.1', '10.3', '11.2', '12.8'})
+
+    def test_backup_dependencies_are_one_decision(self):
+        (self.ops / 'host.conf').write_text('ESCLUSIONI="7.1 10 10b 10.3 11.2 12.8" # foundation\n')
+        self.runq('sync')
+        r=json.loads(self.path().read_text())
+        self.assertIn('10', r)
+        self.assertNotIn('10b', r)
+        self.assertIn('10: analisi', self.runq('next').stdout)
+
+    def test_technical_task_does_not_require_banal_approval(self):
+        self.runq('sync')
+        self.runq('collect', '--kb-failed')
+        r=json.loads(self.path().read_text())
+        self.assertFalse(r['kb-sync']['requires_approval'])
+        r['kb-sync']['analysis']='Token da rinnovare personalmente; controlli locali autorizzati'
+        r['kb-sync']['recommendation']='Verificare stato senza stampare credenziali'
+        self.path().write_text(json.dumps(r))
+        self.runq('advance','kb-sync','esecuzione','--evidence','Policy lettura ordinaria')
+
+    def test_observations_distinguish_failures_from_unavailable_access(self):
+        spec=importlib.util.spec_from_file_location('questions', TOOL)
+        mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        self.assertIn('finalrd', mod.observations(lambda *a,**k: subprocess.CompletedProcess(a,0,'status=73/CANTCREAT','')))
+        self.assertEqual({}, mod.observations(lambda *a,**k: subprocess.CompletedProcess(a,1,'','access denied')))
 
 class Maintenance(unittest.TestCase):
     def setUp(self):

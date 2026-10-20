@@ -55,6 +55,8 @@ v_repo() {
   local st
   [ -d "$OPS/.git" ] && ok "$OPS è un repository Git" || ko "$OPS senza repository Git (rieseguire bootstrap.sh)"
   if [ -d "$OPS/knowledge-base/.git" ] && st=$(as_admin "$OPS/bin/kb" status 2>&1); then ok "Knowledge Base: ${st%%$'\n'*}"
+  elif [ "$(hc_get FOUNDATION_ONLY)" = yes ] || grep -q '^KB_SCELTA="no"' "$OPS/kb.conf"; then
+    nota 'Knowledge Base facoltativa non disponibile: esito e attivita nel rapporto finale, base non bloccata'
   else ko "Knowledge Base non disponibile: registrare la deploy key del server (~$ADMIN/.ssh/kb_deploy.pub) e poi, come $ADMIN, /srv/ops/bin/kb init"; fi
 }
 
@@ -87,6 +89,12 @@ v_gate() {
   out=$(as_admin "$OPS/bin/quick-check" --gate 2>&1) || rc=$?
   echo "$out" | sed 's/^/  /'
   if [ "$rc" -eq 0 ]; then ok "quick-check --gate: uscita 0"; return; fi
+  if [ "$(hc_get FOUNDATION_ONLY)" = yes ] && excluded 10 && [ "$rc" -eq 1 ]; then
+    others=$(grep -E '^  (ATTENZIONE|ERRORE)' <<<"$out" | grep -vE 'ATTENZIONE (backup non ancora configurato|copia remota non configurata)' || true)
+    if [ -z "$others" ] && grep -q 'ATTENZIONE backup non ancora configurato' <<<"$out"; then
+      ok 'salute foundation verificata; gate produzione resta bloccato dal backup rinviato'; return
+    fi
+  fi
   # con 10.3 esclusa il gate DEVE restare bloccato dalla sola copia remota: collaudo locale, non produzione
   others=$(grep -E '^  (ATTENZIONE|ERRORE)' <<<"$out" | grep -v 'ATTENZIONE copia remota non configurata' || true)
   if excluded 10.3 && [ "$rc" -eq 1 ] && [ -z "$others" ] && grep -q 'ATTENZIONE copia remota non configurata' <<<"$out"; then

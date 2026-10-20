@@ -35,6 +35,7 @@ class InstallerTest(unittest.TestCase):
         self.digest = hashlib.sha256(self.archive.read_bytes()).hexdigest()
         self.sums = self.root / 'SHA256SUMS'
         self.sums.write_bytes(f'{self.digest}  {self.name}.tar.gz\n'.encode())
+        self.extra_env = {}
         self.command('id', 'case "$1" in -u) echo 1000 ;; -un) echo tester ;; -nG) echo "tester sudo" ;; *) exit 90 ;; esac')
         self.command('sudo', '[ "$2" = --admin ] && [ "$3" = tester ] && [ "$4" = --check ] || exit 91\nprintf "BOOTSTRAP_BOUNDARY_OK\\n" > "$INSTALL_TEST_TRACE"\necho BOOTSTRAP_BOUNDARY_OK')
         self.command('curl', 'while [ "$#" -gt 0 ]; do\ncase "$1" in -o) dst=$2; shift 2 ;; https:*) url=$1; shift ;; *) shift ;; esac\ndone\ncase "$url" in */SHA256SUMS) cp "$INSTALL_TEST_SUMS" "$dst" ;; *.tar.gz) cp "$INSTALL_TEST_ARCHIVE" "$dst" ;; *) exit 92 ;; esac')
@@ -44,11 +45,13 @@ class InstallerTest(unittest.TestCase):
         p.write_text('#!/bin/bash\nset -eu\n' + body + '\n')
         p.chmod(0o755)
 
-    def run_installer(self, digest=None, expected=0):
+    def run_installer(self, digest=None, expected=0, options=None):
         env = dict(os.environ, HOME=str(self.home), PATH=str(self.bin) + ':' + os.environ['PATH'],
                    INSTALL_TEST_TRACE=str(self.root / 'trace'), INSTALL_TEST_SUMS=str(self.sums),
                    INSTALL_TEST_ARCHIVE=str(self.archive))
-        cmd = f'cat {shlex.quote(str(self.script))} | bash -s -- --check --sha256 {shlex.quote(digest or self.digest)}'
+        env.update(self.extra_env)
+        opts=shlex.join(options or ['--check'])
+        cmd = f'cat {shlex.quote(str(self.script))} | bash -s -- {opts} --sha256 {shlex.quote(digest or self.digest)}'
         r = subprocess.run(['script', '-qec', cmd, '/dev/null'], env=env, capture_output=True, text=True, timeout=120)
         self.assertEqual(r.returncode, expected, r.stdout + r.stderr)
         self.assertEqual((self.root / 'trace').exists(), expected == 0)
@@ -76,6 +79,28 @@ class InstallerTest(unittest.TestCase):
 
     def test_independent_digest_mismatch_stops_before_sudo(self):
         self.run_installer(digest='0' * 64, expected=3)
+
+    def configure_fixture(self, boot_rc):
+        configure=self.root/'configura-server'
+        configure.write_text('#!/bin/bash\n[ -t 0 ] || exit 93\necho CONFIGURE_OK > "$INSTALL_TEST_TRACE"\n')
+        configure.chmod(0o755)
+        self.script=self.root/'installer-under-test.sh'
+        self.script.write_text((ROOT/'install.sh').read_text().replace('exec /usr/local/bin/configura-server', 'exec '+shlex.quote(str(configure))))
+        self.command('sudo', '[ "$2" = --admin ] && [ "$3" = tester ] && [ "$4" = --login-dopo-configurazione ] || exit 91\nexit "$BOOT_SIM_RC"')
+        self.extra_env['BOOT_SIM_RC']=str(boot_rc)
+
+    def test_foundation_continues_after_optional_kb_failure(self):
+        self.configure_fixture(4)
+        result=self.run_installer(options=['--configura','--profilo','docker','--foundation'])
+        self.assertIn('KB facoltativa non collegata', result.stdout)
+
+    def test_foundation_keeps_real_bootstrap_error_blocking(self):
+        self.configure_fixture(3)
+        self.run_installer(expected=3, options=['--configura','--profilo','docker','--foundation'])
+
+    def test_strict_mode_keeps_kb_failure_blocking(self):
+        self.configure_fixture(4)
+        self.run_installer(expected=4, options=['--configura','--profilo','docker'])
 
     @unittest.skipUnless(os.environ.get('PUBLIC_INSTALL_TAG'), 'Download pubblico solo su richiesta esplicita')
     def test_live_public_download_until_sudo_boundary(self):

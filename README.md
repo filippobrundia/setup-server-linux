@@ -1,5 +1,5 @@
-> Candidato **0.8.0-rc.2**, base v0.7.0 congelata. Pre-release sperimentale: collaudo VM ancora da eseguire.
-> Per questa revisione seguire [COLLAUDO-VM-0.8.0.md](COLLAUDO-VM-0.8.0.md).
+> Candidato **0.8.0-rc.3**, base v0.7.0 congelata. Pre-release sperimentale: collaudo VM ancora da eseguire.
+> Per questa revisione seguire [FOUNDATION-0.8.0-rc.3.md](FOUNDATION-0.8.0-rc.3.md).
 > I comandi pubblici 0.7.0 sotto restano riferiti alla release stabile precedente.
 
 # setup-server-linux

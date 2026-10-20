@@ -1,0 +1,38 @@
+# Dopo la foundation
+
+Registro canonico: `register.json`, generato da `python3 bin/ops-questions.py sync`.
+Il completamento della base non completa le questioni, non certifica produzione e non concede accessi.
+STATUS e rapporto finale devono rimandare qui, senza una seconda lista concorrente.
+
+L'amministratore legge AGENTS, STATUS, KB applicabile e `python3 bin/ops-questions.py next`.
+Presenta un mandato breve: risultato atteso, procedura/skill applicabile, strumenti, permessi già validi,
+prove e recupero. Una questione alla volta. Nessuna ricostruzione teorica dell'azienda o delle policy.
+
+Per `kind=decisione` compila nel JSON analysis, alternatives e recommendation: stato osservato,
+alternative concrete, costi/interruzioni, soluzione consigliata e recupero.
+Poi `advance ID approvazione --evidence RIF_PROPOSTA`; solo dopo un'approvazione umana reale
+registra `approvata`, quindi `esecuzione`, `verifica`, `chiusa` con riferimenti reali.
+Il registro non autentica la persona e non sostituisce i permessi della macchina.
+
+Per `kind=attivita`, `requires_approval=false`, l'operazione ordinaria gia autorizzata puo passare
+da analisi a esecuzione con analysis e recommendation compilate e riferimento alla policy in evidence.
+Non chiedere conferme per aggiornamenti ordinari, letture, documentazione o recuperi gia autorizzati.
+Se emerge un cambiamento incompatibile, una spesa, un rischio concreto non coperto o una modifica
+di privilegi/rete, fermare l'azione e ottenere la decisione necessaria prima di eseguirla.
+Sudo continua a richiedere la password del proprietario nel terminale; nessun privilegio generale nuovo.
+
+Le dipendenze 10/10b sono un unico tema backup: prima definire cosa salvare, dove, retention,
+cifratura e recupero; poi configurare e provare, senza dichiarare coperto cio che non e verificato.
+La copia remota non si completa dal nome OFFSITE. Il gate di manutenzione rimane vincolante.
+Quando si completano le configurazioni, aggiornare host.conf, ESCLUSIONI, stato, decisioni e prove;
+`sync` non chiude automaticamente le voci e una ripresa foundation non reinserisce i rinvii rimossi.
+La modalita completa richiede `FOUNDATION_ONLY="no"` e parametri/prerequisiti effettivi: non impostarla
+solo per togliere avvisi o dichiarare il server pronto.
+
+`collect` rileva in sola lettura anomalie finalrd nel boot precedente ed eventi correnti del journal.
+Un evento segnalato richiede analisi, non prova automaticamente un guasto corrente o una causa.
+La KB non raggiungibile resta un task; l'assenza di accesso ai log non e prova di salute.
+Non modificare link o disabilitare servizi per nascondere errori di spegnimento.
+
+Nessun segreto nel registro, nei log condivisi o in Git. Conservare storia, prove, approvazioni e fallimenti.
+Il registro non esegue comandi. Non confonderlo con KB tecnica o memorie di aziende/progetti.

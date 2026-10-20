@@ -10,10 +10,12 @@ import sys
 BEGIN = '<!-- ops:configurazione-verificata -->'
 END = '<!-- /ops:configurazione-verificata -->'
 KEYS = ('HOST', 'ADMIN', 'PROFILO', 'LAN_CIDR', 'MOUNTS', 'DATA_MOUNT',
-        'SERVICES', 'CONTAINERS', 'ESCLUSIONI', 'KB_SCELTA')
+        'SERVICES', 'CONTAINERS', 'ESCLUSIONI', 'KB_SCELTA', 'FOUNDATION_ONLY')
 REASONS = {
     '2': 'layout dei dischi dedicato non collaudato',
     '7.1': 'rete statica non configurata',
+    '10': 'copertura, destinazione e recupero del backup da decidere; backup NON configurato',
+    '10b': 'rotazione e ripristino del backup rinviati con la decisione 10',
     '10.3': 'copia remota non configurata: gate e manutenzione bloccati',
     '11.2': 'monitoraggio esterno non configurato',
     '12.8': 'finestra di manutenzione automatica non attivata',
@@ -71,7 +73,8 @@ def render(ops, data):
             f'Amministratore: {code(conf.get("ADMIN", "non registrato"))}. Profilo: {code(conf.get("PROFILO", ""))}.\n\n'
             f'Esito: {state}.\n\n')
     next_step = ('Prossimo passo: scegliere un agente con `agente`, autenticare solo quello e chiedere il resoconto. '
-                 'Le esclusioni restano nel backlog e non sono prove superate.')
+                 'Leggere prima `python3 bin/ops-questions.py next`: un attivita alla volta, autorizzazioni ordinarie gia valide. '
+                 'Le esclusioni restano nel registro e non sono prove superate.')
     docs = {
         'docs/overview.md': stamp + base + 'Servizi attesi: ' + code(conf.get('SERVICES', '')) + '.\n\n' + next_step,
         'docs/system.md': stamp + 'Stato dei servizi attesi (ordine: ' + code(conf.get('SERVICES', '')) + '):\n\n'
@@ -82,7 +85,7 @@ def render(ops, data):
                               else 'Configurazione stabile: esito del passo 7.1 nei log; nessuna credenziale di rete riportata.'),
         'docs/storage-backup.md': stamp + 'Montaggi attesi: ' + code(conf.get('MOUNTS', ''))
                                  + '. Dati: ' + code(conf.get('DATA_MOUNT', '')) + '.\n\n```text\n' + data['mounts']
-                                 + '\n```\n\nBackup locale e ripristino: consultare esiti 10 e 10b in /var/log/ops-installa/.\n\n'
+                                 + '\n```\n\n' + ('Backup locale e ripristino RINVIATI: nessun backup o restore certificato.\n\n' if '10' in exclusions else 'Backup locale e ripristino: consultare esiti 10 e 10b in /var/log/ops-installa/.\n\n')
                                  + ('Copia remota esclusa; non dichiarare disaster recovery completa.' if '10.3' in exclusions
                                     else 'Copia remota: esito e prova nei log, non dedotti dalla sola presenza della configurazione.'),
         'docs/security.md': stamp + 'SSH/firewall: esiti del passo 7 nei log. Sudo conserva la password; '

@@ -131,5 +131,21 @@ echo 'PASS scelta finale Codex dopo installer, senza seconda installazione'
 printf '\n' | script -q -e -c "runuser -u $U -- env CT=$C OPS_CONFIG_TEST_ROOT=$C /bin/bash $PKG/payload/ops/bin/configura-server" /dev/null > "$C/menu-out" 2>&1
 ! grep -q LAUNCH "$C/trace"
 echo 'PASS termine senza chat: nessun agente avviato implicitamente'
+# Foundation: backup e decisioni dopo la base; nessun login e fallimento KB non bloccante.
+check_rc 0 --foundation
+grep -q '^FOUNDATION_ONLY="yes"' "$C/srv/ops/host.conf"
+grep -q 'FOUNDATION COMPLETATA' "$C/srv/ops/docs/bootstrap/esito-configurazione.md"
+python3 - "$C/srv/ops/docs/admin-questions/register.json" <<'PY'
+import json,sys
+r=json.load(open(sys.argv[1]))
+assert '10' in r and r['10']['state']=='analisi' and '10b' not in r
+PY
+printf 'KB_SCELTA="si"\n' > "$C/srv/ops/kb.conf"
+printf '#!/bin/bash\nexit 1\n' > "$C/srv/ops/bin/kb"
+check_rc 0
+grep -q 'kb-sync' "$C/srv/ops/docs/admin-questions/register.json"
+grep -q 'Sincronizzazione fallita' "$C/srv/ops/docs/bootstrap/esito-configurazione.md"
+! grep -q LOGIN "$C/trace"
+echo 'PASS foundation completa con backup rinviato e task KB, senza falsi successi o login'
 shellcheck -S warning "$PKG/payload/ops/bin/configura-server" "$PKG/installa-server.sh" "$PKG/install.sh"
 echo 'CONFIGURA_SERVER_TEST_OK'

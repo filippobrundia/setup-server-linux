@@ -49,7 +49,7 @@ BOOT_ID=${T:+$T/boot_id}; BOOT_ID=${BOOT_ID:-/proc/sys/kernel/random/boot_id}
 TTY=${T:+$T/tty}; TTY=${TTY:-/dev/tty}
 RB_UNIT=ops-ufw-rollback.timer
 ROLLBACK_MIN=10
-VALID_EXCL="2 7.1 10.3 11.2 12.8"
+VALID_EXCL="2 7.1 10 10b 10.3 11.2 12.8"
 # file del pacchetto eseguiti o letti come root: confrontati con le impronte prima di ogni esecuzione
 SNAPSET_RE='^(docs/bootstrap/[A-Za-z0-9_.-]+\.sh|docs/bootstrap/ops-installa|maint/[A-Za-z0-9_./-]+|bin/[A-Za-z0-9_.-]+)$'
 
@@ -119,7 +119,13 @@ load_params() {  # $1 = file passi-comune.sh da usare; raccoglie TUTTI i problem
   OPS=${OPS_DIR:-$OPS}
   load_host_conf
   PROFILO=$(hc_get PROFILO); ESCLUSIONI=$(hc_get ESCLUSIONI); MOUNTS=$(hc_get MOUNTS); OFFSITE=$(hc_get OFFSITE)
+  FOUNDATION_ONLY=$(hc_get FOUNDATION_ONLY)
   PROBLEMI=()
+  case $FOUNDATION_ONLY in yes|no|'') ;; *) PROBLEMI+=("FOUNDATION_ONLY non valido") ;; esac
+  if excluded 10 || excluded 10b; then
+    [ "$FOUNDATION_ONLY" = yes ] && excluded 10 && excluded 10b && excluded 10.3 && excluded 12.8 \
+      || PROBLEMI+=("backup rinviato ammesso solo in foundation con 10, 10b, 10.3 e 12.8 rinviati")
+  fi
   case $PROFILO in base|docker) ;; "") PROBLEMI+=("PROFILO vuoto: base (senza container) o docker") ;; *) PROBLEMI+=("PROFILO non valido: $PROFILO (base o docker)") ;; esac
   local e s
   for e in $ESCLUSIONI; do [[ " $VALID_EXCL " == *" $e "* ]] || PROBLEMI+=("ESCLUSIONI: '$e' non ammesso (ammessi: $VALID_EXCL)"); done
@@ -250,10 +256,10 @@ update_progress() {  # $1 = completato (0/1)
     r=$(section_status "$sec"); [ "${r%%|*}" != "" ] || continue
     map+="$sec|$r"$'\n'
   done
-  kb=$(st_get 4); [ "$kb" = fatto ] && map+="kb|fatto|kb status superato (ops-installa)"$'\n'
-  as_admin env AV_MAP="$map" AV_DATE="$(date -u +%F)" AV_DONE="${1:-0}" AV_ESCL="$(esclusi_dichiarati)" awk -F'|' '
+  kb=$(st_get 4); [ "$kb" = fatto ] && map+="kb|fatto|repository verificato; esito della KB facoltativa nel rapporto finale"$'\n'
+  as_admin env AV_MAP="$map" AV_DATE="$(date -u +%F)" AV_DONE="${1:-0}" AV_FOUNDATION="$FOUNDATION_ONLY" AV_ESCL="$(esclusi_dichiarati)" awk -F'|' '
     BEGIN { n = split(ENVIRON["AV_MAP"], L, "\n"); for (i = 1; i <= n; i++) if (L[i] != "") { split(L[i], p, "|"); st[p[1]] = p[2]; nt[p[1]] = p[3] } }
-    /^STATO: / && ENVIRON["AV_DONE"] == "1" { print (ENVIRON["AV_ESCL"] == "" ? "STATO: COMPLETATO" : "STATO: COMPLETATO CON ESCLUSIONI (" ENVIRON["AV_ESCL"] "): validazione per produzione incompleta"); next }
+    /^STATO: / && ENVIRON["AV_DONE"] == "1" { print (ENVIRON["AV_FOUNDATION"] == "yes" ? "STATO: COMPLETATO FOUNDATION — attivita amministrative aperte; produzione non validata" : (ENVIRON["AV_ESCL"] == "" ? "STATO: COMPLETATO" : "STATO: COMPLETATO CON ESCLUSIONI (" ENVIRON["AV_ESCL"] "): validazione per produzione incompleta")); next }
     /^\| [0-9]+\. / { k = $2; sub(/^ /, "", k); sub(/\..*/, "", k)
                      if (k in st) { printf "|%s| %s | %s | %s |\n", $2, st[k], ENVIRON["AV_DATE"], nt[k]; next } }
     /^\| Knowledge Base condivisa/ && ("kb" in st) { printf "|%s| %s | %s | %s |\n", $2, st["kb"], ENVIRON["AV_DATE"], nt["kb"]; next }
@@ -574,10 +580,21 @@ for line in "${STEPS[@]}"; do
   esac
 done
 
+# I timer CLI hanno recupero proprio e non dipendono da decisioni su backup/offsite.
+if [ "$FOUNDATION_ONLY" = yes ] && [ "$(st_get 12.9)" != fatto ]; then
+ if run_logged 12.9-cli-timers bash "$SNAP/maint/install-maint" enable cli-update; then
+   st_set 12.9 fatto 'timer CLI deterministici, senza login o modelli'
+ else
+   st_set 12.9 errore 'attivazione timer CLI fallita'; finish_summary; exit 1
+ fi
+fi
 update_progress 1
 st_meta_set completato "$(now)"
 say ""
-if [ -n "$(esclusi_dichiarati)" ]; then
+if [ "$FOUNDATION_ONLY" = yes ]; then
+  say 'FOUNDATION COMPLETATA. Decisioni e attivita successive nel registro amministrativo; produzione NON validata.'
+  say "Rinvii espliciti: $(esclusi_dichiarati). Backup, offsite e finestra non sono dichiarati pronti."
+elif [ -n "$(esclusi_dichiarati)" ]; then
   say "COLLAUDO LOCALE COMPLETATO CON ESCLUSIONI ($(esclusi_dichiarati)): VALIDAZIONE PER PRODUZIONE INCOMPLETA."
   say "avanzamento.md: STATO: COMPLETATO CON ESCLUSIONI (commit). Le voci escluse restano da completare per la produzione."
   say "$(date -u '+%F %T')  COLLAUDO LOCALE COMPLETATO CON ESCLUSIONI ($(esclusi_dichiarati)); validazione per produzione incompleta" >> "$RUNDIR/riepilogo.log"

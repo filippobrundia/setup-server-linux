@@ -133,8 +133,9 @@ out=$(asu '/srv/ops/bin/quick-check'); echo "$out" | sed 's/^/   | /'
 echo "$out" | grep -q 'Configurazione iniziale' && echo "$out" | grep -q 'backup non ancora configurato' && pass "quick-check riconosce la configurazione incompleta" || bad "quick-check"
 asu '/srv/ops/bin/quick-check --gate' | grep -q 'Configurazione iniziale' && bad "gate non deve contare l'avanzamento" || pass "gate indipendente dall'avanzamento"
 t "origini della finestra (release della macchina)" bash -c ". /etc/os-release; /usr/local/sbin/ops-maint origins | grep -qF \"Ubuntu:\${VERSION_ID//./\\\\.}/\$VERSION_CODENAME\""
-out=$(DRY_RUN=1 /usr/local/sbin/ops-maint window 2>&1); echo "$out" | sed 's/^/   | /'
-echo "$out" | grep -q 'niente da fare' && pass "finestra DRY_RUN senza azioni" || bad "finestra DRY_RUN"
+out=$(DRY_RUN=1 /usr/local/sbin/ops-maint window 2>&1); rc=$?; echo "$out" | sed 's/^/   | /'
+[ "$rc" = 0 ] && grep -qE 'niente da fare|DRY_RUN:|RINVIO:' <<<"$out" && ! grep -qE ' window: (installo:|riavvio \()' <<<"$out" \
+  && pass "finestra DRY_RUN senza azioni" || bad "finestra DRY_RUN"
 t "ops-maint procs" /usr/local/sbin/ops-maint procs
 tn "enable window rifiutato senza systemd/prerequisiti" /srv/ops/maint/install-maint enable window
 t "maint-approve --show" asu '/srv/ops/bin/maint-approve --show'

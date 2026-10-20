@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh — punto di ingresso pubblico di setup-server-linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.8.0-rc.2/install.sh \
+#   curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.8.0-rc.3/install.sh \
 #     | bash -s -- --sha256 <IMPRONTA DALLA PAGINA DELLA RELEASE> [--check] [--owner "Nome"] [--knowledge-base-only]
 #                  [--no-kb | --kb-url https://host/percorso]   (Knowledge Base facoltativa: senza opzioni la domanda arriva durante l'avvio)
 #                  [--agente claude|codex|agy|gemini]          (agente della sessione: senza opzione la domanda arriva alla fine)
@@ -12,7 +12,7 @@
 # "sudo bootstrap.sh --admin <questo utente>" (sudo chiede la password). --check: solo controllo, nessuna modifica.
 set -euo pipefail
 REPO=filippobrundia/setup-server-linux
-VERSION=0.8.0-rc.2
+VERSION=0.8.0-rc.3
 NAME=setup-server-linux-$VERSION
 BASE=https://github.com/$REPO/releases/download/v$VERSION
 
@@ -22,7 +22,7 @@ CONFIGURA=0; CONFARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --configura) CONFIGURA=1; shift ;;
-    --vm) CONFARGS+=(--vm); shift ;;
+    --vm|--foundation) CONFARGS+=("$1"); shift ;;
     --profilo|--esclusioni) [ $# -ge 2 ] || die "manca il valore di $1"; CONFARGS+=("$1" "$2"); shift 2 ;;
     --sha256) WANT=${2:-}; shift 2 ;;
     --check)  ARGS+=(--check); shift ;;
@@ -78,7 +78,15 @@ fi
 echo "== avvio: sudo $DEST/bootstrap.sh --admin $ME ${ARGS[*]:-}"
 if [ "$CONFIGURA" = 1 ]; then
   for a in "${ARGS[@]}"; do case $a in --check|--knowledge-base-only) die "--configura non si combina con $a" ;; esac; done
-  sudo "$DEST/bootstrap.sh" --admin "$ME" --login-dopo-configurazione "${ARGS[@]}" < /dev/tty
+  BOOT_RC=0
+  sudo "$DEST/bootstrap.sh" --admin "$ME" --login-dopo-configurazione "${ARGS[@]}" < /dev/tty || BOOT_RC=$?
+  if [ "$BOOT_RC" != 0 ]; then
+    FOUNDATION_CONFIG=0
+    for a in "${CONFARGS[@]}"; do case $a in --vm|--foundation) FOUNDATION_CONFIG=1 ;; esac; done
+    if [ "$BOOT_RC" = 4 ] && [ "$FOUNDATION_CONFIG" = 1 ]; then
+      echo 'KB facoltativa non collegata: foundation prosegue; attivita e dettagli nel rapporto finale.'
+    else exit "$BOOT_RC"; fi
+  fi
   exec /usr/local/bin/configura-server "${CONFARGS[@]}" < /dev/tty
 else
   if [ -r /dev/tty ]; then exec sudo "$DEST/bootstrap.sh" --admin "$ME" "${ARGS[@]}" < /dev/tty

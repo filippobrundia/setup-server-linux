@@ -13,14 +13,15 @@ RILEVA=$T/usr/local/lib/ops-bootstrap/rileva-parametri.sh
 HOSTCHECK=$T/usr/local/bin/ops-host-check
 INSTALLA=$T/usr/local/sbin/ops-installa
 AGENTE_CMD=$OPS/bin/agente
-PROF=""; ESCL=""; ESCL_SET=0; PREPARA=0; VM=0
-usage() { echo 'Uso: configura-server [--profilo base|docker] [--esclusioni "7.1 10.3 11.2 12.8"] [--prepara] [--vm]'; }
+PROF=""; ESCL=""; ESCL_SET=0; PREPARA=0; VM=0; FOUNDATION=0
+usage() { echo 'Uso: configura-server [--profilo base|docker] [--esclusioni "7.1 10.3 11.2 12.8"] [--prepara] [--vm] [--foundation]'; }
 while [ $# -gt 0 ]; do
  case $1 in
   --profilo) [ $# -ge 2 ] || { usage; exit 2; }; PROF=$2; shift 2 ;;
   --esclusioni) [ $# -ge 2 ] || { usage; exit 2; }; ESCL=$2; ESCL_SET=1; shift 2 ;;
   --prepara) PREPARA=1; shift ;;
-  --vm) VM=1; shift ;;
+  --vm) VM=1; FOUNDATION=1; shift ;;
+  --foundation) FOUNDATION=1; shift ;;
   -h|--help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
  esac
@@ -44,10 +45,16 @@ if [ "$ESCL_SET" = 0 ]; then ESCL=$(hc ESCLUSIONI); fi
 if [ "$VM" = 1 ]; then
  [ "$ESCL_SET" = 0 ] || { echo '--vm non si combina con --esclusioni'; exit 3; }
  systemd-detect-virt --vm --quiet || { echo '--vm richiede una VM rilevata'; exit 3; }
- ESCL='7.1 10.3 11.2 12.8'
+ : # La modalita foundation viene persistita sotto il lock.
  echo 'Collaudo VM: rete stabile, offsite, monitoraggio e finestra restano questioni aperte. Nessuna certificazione produzione.'
 fi
-for e in $ESCL; do case $e in 2|7.1|10.3|11.2|12.8) ;; *) echo "Esclusione non ammessa: $e" >&2; exit 3 ;; esac; done
+[ "$(hc FOUNDATION_ONLY)" != yes ] || FOUNDATION=1
+if [ "$FOUNDATION" = 1 ]; then
+ [ "$ESCL_SET" = 0 ] || { echo '--foundation non si combina con --esclusioni'; exit 3; }
+ if [ "$(hc FOUNDATION_ONLY)" != yes ]; then ESCL='7.1 10 10b 10.3 11.2 12.8'; fi
+ echo 'Foundation: le decisioni amministrative saranno trattate dopo la base; nessun backup configurato per supposizione.'
+fi
+for e in $ESCL; do case $e in 2|7.1|10|10b|10.3|11.2|12.8) ;; *) echo "Esclusione non ammessa: $e" >&2; exit 3 ;; esac; done
 if [[ " $ESCL " == *' 10.3 '* ]] && [[ " $ESCL " != *' 12.8 '* ]]; then echo '10.3 esclusa richiede anche 12.8 esclusa.' >&2; exit 3; fi
 # Blocco per l'intera preparazione: nessuna modifica contemporanea a parametri e decisioni.
 install -d -m 0700 "$HOME/.local/state/ops"
@@ -55,6 +62,10 @@ exec 9>"$HOME/.local/state/ops/configura-server.lock"
 flock -n 9 || { echo 'Una configurazione e gia in corso.' >&2; exit 3; }
 echo "Preparazione automatica dei parametri del server reale..."
 OPS_CONFIG_GUIDED=1 OPS_DIR="$OPS" /bin/bash "$RILEVA" --scrivi --profilo "$PROF" --esclusioni "$ESCL"
+if [ "$FOUNDATION" = 1 ]; then
+ if grep -q '^FOUNDATION_ONLY=' "$HC"; then sed -i 's/^FOUNDATION_ONLY=.*/FOUNDATION_ONLY="yes"/' "$HC"
+ else printf '\nFOUNDATION_ONLY="yes"\n' >> "$HC"; fi
+fi
 DEC=$OPS/docs/decisions.md
 MARK="Configurazione deterministica: profilo=$PROF; esclusioni=$ESCL"
 if ! grep -Fq "$MARK" "$DEC"; then
@@ -91,6 +102,7 @@ if [ "$rc" = 5 ]; then
 fi
 REPORT=$OPS/docs/bootstrap/esito-configurazione.md
 KB_ESITO='Non controllata: configurazione non conclusa.'
+KB_PENDING=0
 if [ "$rc" = 0 ]; then
  python3 "$OPS/bin/memoria-iniziale.py" "$OPS" || rc=6
 fi
@@ -112,14 +124,22 @@ PYKB
    if timeout --kill-after=5s 120 "$OPS/bin/kb" sync --quiet --strict; then
     KB_ESITO='Sincronizzazione immediata riuscita; esito del cron periodico da verificare separatamente.'
    else
+    KB_PENDING=1
     KB_ESITO='Sincronizzazione fallita: consultare kb status. La sola configurazione non prova accesso e aggiornamento.'
-    rc=7
+    if [ "$FOUNDATION" != 1 ]; then rc=7; fi
    fi ;;
-  *) KB_ESITO='Scelta KB non registrata correttamente: completare il collegamento o dichiarare la rinuncia.'; rc=7 ;;
+  *) KB_ESITO='Scelta KB non registrata correttamente: completare il collegamento o dichiarare la rinuncia.'
+     KB_PENDING=1; if [ "$FOUNDATION" != 1 ]; then rc=7; fi ;;
  esac
+fi
+# I problemi tecnici osservati diventano attivita persistenti, senza modifiche al sistema.
+if [ "$rc" = 0 ]; then
+ OBS_ARGS=(); [ "$KB_PENDING" != 1 ] || OBS_ARGS+=(--kb-failed)
+ python3 "$OPS/bin/ops-questions.py" --ops "$OPS" collect "${OBS_ARGS[@]}"
 fi
 {
  echo '# Esito della configurazione deterministica'
+ if [ "$rc" = 0 ] && [ "$FOUNDATION" = 1 ]; then echo; echo 'FOUNDATION COMPLETATA — amministrazione da completare con agente; produzione NON validata.'; fi
  printf '\nData UTC: %s\nProfilo: %s\nEsclusioni: %s\nCodice reale installer: %s\nCodice finale procedura: %s\n' "$(date -u +%FT%TZ)" "$PROF" "$ESCL" "$INSTALL_RC" "$rc"
  grep -m1 '^STATO:' "$OPS/docs/bootstrap/avanzamento.md" || true
  printf '\nKnowledge Base: %s\n' "$KB_ESITO"
@@ -137,18 +157,22 @@ if [ "$rc" = 0 ]; then
 fi
 printf '\n## Configurazione deterministica — %s\nCodice finale: %s. Profilo: %s. Esclusioni: %s. Rapporto: docs/bootstrap/esito-configurazione.md. Le esclusioni non valgono come prove superate per produzione.\nKnowledge Base: %s\n' "$(date -u +%FT%TZ)" "$rc" "$PROF" "${ESCL:-(nessuna)}" "$KB_ESITO" >> "$STATUS"
 printf '\n- %s — Configurazione deterministica, codice %s; rapporto salvato, esclusioni: %s.\n' "$(date -u +%F)" "$rc" "${ESCL:-(nessuna)}" >> "$CHANGE"
-git -C "$OPS" add STATUS.md CHANGELOG.md
+git -C "$OPS" add STATUS.md CHANGELOG.md docs/admin-questions/register.json
 if [ "$rc" = 0 ] || [ "$rc" = 7 ]; then
  git -C "$OPS" add AGENTS.md docs/overview.md docs/system.md docs/network.md docs/storage-backup.md docs/security.md docs/future-improvements.md
 fi
 git -C "$OPS" add docs/bootstrap/esito-configurazione.md
-MEM_FILES=(docs/bootstrap/esito-configurazione.md STATUS.md CHANGELOG.md)
+MEM_FILES=(docs/bootstrap/esito-configurazione.md STATUS.md CHANGELOG.md docs/admin-questions/register.json)
 if [ "$rc" = 0 ] || [ "$rc" = 7 ]; then MEM_FILES+=(AGENTS.md docs/overview.md docs/system.md docs/network.md docs/storage-backup.md docs/security.md docs/future-improvements.md); fi
 git -C "$OPS" diff --quiet HEAD -- "${MEM_FILES[@]}" || git -C "$OPS" commit -m 'Esito e memoria della configurazione deterministica' -- "${MEM_FILES[@]}"
 cat "$REPORT"
+if [ "$rc" = 0 ]; then
+ echo; echo 'Attivita persistenti per l amministratore: docs/admin-questions/register.json'
+ echo 'Prossima attivita: python3 /srv/ops/bin/ops-questions.py next. Per iniziare: agente.'
+fi
 # La scelta avviene solo dopo un setup riuscito e dal terminale personale.
 # Nessun avvio di chat implicito nelle riprese senza terminale o nei test.
-if [ "$rc" = 0 ] && [ -t 0 ]; then
+if [ "$rc" = 0 ] && [ "$FOUNDATION" != 1 ] && [ -t 0 ]; then
  echo
  echo 'Configurazione conclusa. Quale agente vuoi aprire per amministrare il server?'
  echo '  1) Antigravity   2) Codex   3) Claude   4) Gemini CLI   0) Termina qui'

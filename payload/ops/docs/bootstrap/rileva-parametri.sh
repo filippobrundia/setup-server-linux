@@ -25,7 +25,7 @@ while [ $# -gt 0 ]; do
 done
 [ "$(id -u)" != 0 ] || { echo "da eseguire come amministratore, senza sudo" >&2; exit 2; }
 case $PROF in ""|base|docker) ;; *) echo "--profilo: base o docker" >&2; exit 2 ;; esac
-AMMESSE="2 7.1 10.3 11.2 12.8"
+AMMESSE="2 7.1 10 10b 10.3 11.2 12.8"
 for e in $ESCL; do [[ " $AMMESSE " == *" $e "* ]] || { echo "--esclusioni: '$e' non ammesso ($AMMESSE)" >&2; exit 2; }; done
 [ -f "$HC" ] || { echo "manca $HC" >&2; exit 2; }
 hc() { local l; l=$(grep -E "^$1=" "$HC" | tail -n 1 || true); l=${l#*=}; case $l in \"*) l=${l#\"}; l=${l%%\"*} ;; *) l=${l%%[[:space:]]*} ;; esac; printf '%s' "$l"; }

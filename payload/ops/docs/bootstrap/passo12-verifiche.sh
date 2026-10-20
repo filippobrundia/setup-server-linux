@@ -22,7 +22,10 @@ ko() { echo "KO  $*"; bad=1; }
 export LC_ALL=C.UTF-8
 load_host_conf
 need LAN_CIDR "rete locale ammessa da UFW (sezione 0)"
-need BORG_REPO "repository Borg locale (sezione 10.1)"
+DEFER_BACKUP=0
+if [ "$(hc_get FOUNDATION_ONLY)" = yes ] && [[ " $(hc_get ESCLUSIONI) " == *' 10 '* ]]; then
+  DEFER_BACKUP=1
+else need BORG_REPO "repository Borg locale (sezione 10.1)"; fi
 REPO=$BORG_REPO
 bad=0
 h=$(date -u +%H%M); [ "$h" -lt 0300 ] || [ "$h" -ge 0410 ] || die "03:00–04:10 UTC: finestra del backup notturno"
@@ -44,6 +47,9 @@ if [ "$L" = "0.0.0.0:22 [::]:22 " ]; then ok "porte TCP in ascolto verso l'ester
 else echo "  porte TCP in ascolto oltre il loopback (ognuna da spiegare in docs/network.md): $L"; fi
 fail2ban-client status sshd | grep -E 'Currently (failed|banned)' | sed 's/^/  /'
 
+if [ "$DEFER_BACKUP" = 1 ]; then
+ echo 'RINVIATO 12.2: copertura/destinazione/recupero backup da decidere con amministratore; ripristino NON verificato.'
+else
 echo "== 12.2 PROVA DI RIPRISTINO DI /srv/ops"
 A=$(borg list --short --last 1 "$REPO"); [ -n "$A" ] || die "nessun archivio in $REPO"
 echo "  archivio: $A"
@@ -63,6 +69,8 @@ for g in "$R$OPS" "$R$OPS/knowledge-base"; do
   echo "  HEAD ripristinato: $(git -c safe.directory='*' -C "$g" log -1 --format='%h %s' | cut -c1-70)"
 done
 rm -rf -- "$R"; trap - EXIT; ok "cartella temporanea rimossa"
+
+fi
 
 echo "== 12.4 (prima del riavvio) MONTAGGI"
 fv=$(findmnt --verify 2>&1 || true); grep -E "errors|\[[EW]\]" <<<"$fv" | sed "s/^ */  /"

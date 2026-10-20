@@ -121,19 +121,22 @@ grep -q 'ESCLUSO    monitoraggio esterno (11.2' <<<"$out" && ! grep -q 'ATTENZIO
   && pass "con 11.2 in ESCLUSIONI: monitoraggio esterno ESCLUSO" || { bad "11.2 escluso"; echo "$out" | grep -i monitor; }
 # il blocco vale per la manutenzione: ops-maint (stesso controllo di attended e della finestra) rinvia
 M=/tmp/om; rm -rf $M; mkdir -p $M/bin $M/state/inbox; cp /etc/ops-maint.conf $M/conf
+sed -i 's/^AUTO_UPGRADES=.*/AUTO_UPGRADES=no/' $M/conf
+printf '#!/bin/sh\n[ "$1 $2 $3" = "is-enabled --quiet borgmatic.timer" ] && exit 1\nexit 0\n' > $M/bin/systemctl
+chmod 0755 $M/bin/systemctl
 printf '#!/bin/sh\nOPS_DIR=%s exec /srv/ops/bin/quick-check "$@"\n' "$Q" > $M/qc; chmod 0755 $M/qc; chmod 0755 $M
 sed -i "s|^QUICK_CHECK=.*|QUICK_CHECK=$M/qc|" $M/conf; touch $M/lock $M/reboot; printf 'APPROVED=yes\n' > $M/state/inbox/window.conf
 om() { env DRY_RUN=1 MAINT_TEST_PATH=$M/bin MAINT_CONF=$M/conf MAINT_STATE=$M/state MAINT_LOCK=$M/lock MAINT_REBOOT_FLAG=$M/reboot /usr/local/sbin/ops-maint window 2>&1; }
 out=$(om)
-grep -q 'RINVIO: sistema non sano o backup non verificati: ATTENZIONE copia remota non configurata' <<<"$out" && ! grep -q 'riavvierei' <<<"$out" \
+grep -q 'RINVIO: sistema non sano o backup non verificati:' <<<"$out" && grep -q 'ATTENZIONE copia remota non configurata' <<<"$out" && ! grep -q 'riavvierei' <<<"$out" \
   && pass "10.3 esclusa NON aggira il blocco: ops-maint window (DRY_RUN, riavvio richiesto) rinvia per la copia remota" || { bad "ops-maint con 10.3 esclusa"; echo "$out"; }
 sed -i 's|^OFFSITE=.*|OFFSITE="prova"|; s|^OFFSITE_CRON_MATCH=.*|OFFSITE_CRON_MATCH="mai-presente"|' $Q/host.conf
 out=$(om)
-grep -q 'RINVIO: .*copia remota: nessun avvio' <<<"$out" && pass "con OFFSITE ma senza copia eseguita ops-maint rinvia (ERRORE copia remota)" || { bad "ops-maint senza copia eseguita"; echo "$out"; }
+grep -q 'RINVIO:' <<<"$out" && grep -q 'ERRORE.*copia remota: nessun avvio' <<<"$out" && pass "con OFFSITE ma senza copia eseguita ops-maint rinvia (ERRORE copia remota)" || { bad "ops-maint senza copia eseguita"; echo "$out"; }
 # controprova positiva: copia remota eseguita (journal di cron simulato) → stesso ops-maint arriva al riavvio
 sed -i 's|^OFFSITE_CRON_MATCH=.*|OFFSITE_CRON_MATCH="rclone sync"|' $Q/host.conf
 printf '#!/bin/sh\necho "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%S+00:00) testsrv CRON[1]: (root) CMD (rclone sync /x/repo remoto:prova)"\n' > $M/bin/journalctl
-printf '#!/bin/sh\nexit 0\n' > $M/bin/systemctl; chmod 0755 $M/bin $M/bin/*
+chmod 0755 $M/bin $M/bin/*
 out=$(om)
 grep -q 'DRY_RUN: riavvierei' <<<"$out" && ! grep -q RINVIO <<<"$out" \
   && pass "controprova: con la copia remota eseguita lo stesso ops-maint supera il controllo (DRY_RUN: riavvierei)" || { bad "controprova positiva ops-maint"; echo "$out"; }
@@ -151,6 +154,13 @@ out=$(vg); rc=$?
 sed -i 's|^ESCLUSIONI=.*|ESCLUSIONI="10.3 12.8"|; s|^MOUNTS=.*|MOUNTS="/ /non-montato"|' $G/host.conf
 out=$(vg); rc=$?
 [ "$rc" = 1 ] && pass "11.1 con 10.3 esclusa e un altro problema (disco non montato): non superata" || { bad "11.1 altro problema (rc=$rc)"; echo "$out"; }
+sed -i 's|^ESCLUSIONI=.*|ESCLUSIONI="10 10b 10.3 12.8"|; s|^FOUNDATION_ONLY=.*|FOUNDATION_ONLY="yes"|; s|^BORG_REPO=.*|BORG_REPO=""|; s|^MOUNTS=.*|MOUNTS="/"|' $G/host.conf
+out=$(vg); rc=$?
+[ "$rc" = 0 ] && grep -q 'gate produzione resta bloccato dal backup rinviato' <<<"$out" \
+  && pass 'foundation senza backup: salute base accettata e gate produzione dichiarato bloccato' || { bad "gate foundation (rc=$rc)"; echo "$out"; }
+sed -i 's|^MOUNTS=.*|MOUNTS="/ /non-montato"|' $G/host.conf
+out=$(vg); rc=$?
+[ "$rc" = 1 ] && pass 'foundation senza backup non ignora un guasto dei montaggi' || { bad "gate foundation ignora guasto (rc=$rc)"; echo "$out"; }
 rm -rf $Q $M $G
 
 echo "== T22 flusso unico e ripresa (radice di prova, passi simulati)"
@@ -311,6 +321,19 @@ rc=$(oi 'SI\n')
 [ "$rc" = 3 ] && [ ! -e $IT/calls ] && grep -q 'PROFILO vuoto' $IT/out.txt && grep -q 'LAN_CIDR vuoto' $IT/out.txt && grep -q "'6' non ammesso" $IT/out.txt \
   && grep -q '10.3 in ESCLUSIONI: la copia remota mancante blocca finestra e ops-maint attended, aggiungere anche 12.8' $IT/out.txt \
   && pass "parametri incompleti: elenco unico, nessun passo (esito 3)" || { bad "parametri (rc=$rc)"; tail -8 $IT/out.txt; }
+# Foundation completa: dipendenze backup rinviate, reboot/ripresa e timer CLI indipendenti.
+sed -i 's|^PROFILO=.*|PROFILO="base"|; s|^LAN_CIDR=.*|LAN_CIDR="10.0.0.0/24"|; s|^ESCLUSIONI=.*|ESCLUSIONI="2 7.1 10 10b 10.3 11.2 12.8"|; s|^OFFSITE=.*|OFFSITE=""|; s|^FOUNDATION_ONLY=.*|FOUNDATION_ONLY="yes"|' $HC
+fresh; touch $IT/nuovo-login
+echo '0 0 10.0.0.2:22 10.0.0.9:50000' > $IT/ss.txt
+rc=$(oi 'SI\nRIAVVIA\n')
+[ "$rc" = 5 ] && ! grep -q 'passo10' $IT/calls && grep -q 'systemctl reboot' $IT/calls \
+  && pass 'foundation arriva al riavvio senza chiamare backup o chiedere dati offsite' || { bad "foundation prima reboot (rc=$rc)"; tail -10 $IT/out.txt; }
+echo boot-foundation-2 > $IT/boot_id; : > $IT/calls
+rc=$(oi '\n')
+[ "$rc" = 0 ] && grep -q 'verifiche-base.sh dopo-riavvio' $IT/calls && grep -q 'install-maint enable cli-update' $IT/calls \
+  && ! grep -q 'passo10' $IT/calls && ! grep -q 'enable window' $IT/calls \
+  && pass 'foundation riprende e termina a zero con timer CLI, backup e finestra non falsificati' || { bad "foundation dopo reboot (rc=$rc)"; tail -10 $IT/out.txt; }
+rm -f $IT/nuovo-login
 rm -rf $IT /tmp/it-dati
 
 echo "== T24 difetto D1: file della copia protetta 0600 eseguiti direttamente (passo 9 reale sotto ops-installa)"
