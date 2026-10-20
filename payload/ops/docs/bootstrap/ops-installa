@@ -4,6 +4,7 @@
 # Sorgente di riferimento: /srv/ops/docs/bootstrap/ops-installa. Procedura: configurazione-server-base.md.
 #
 #   sudo ops-installa                    esegue o riprende la configurazione dal primo passo non superato
+#   sudo ops-installa --collaudo-backup-vm  prova isolata con dati sintetici, senza cron o backup reale
 #   ops-installa --piano                 sola lettura, anche senza sudo: parametri, esclusioni, stato dei passi
 #   sudo ops-installa --rollback PASSO   annulla un passo con il suo script (3 5 6 7 8 9 10 10b), poi "da fare"
 #   sudo ops-installa --dichiara-correzione FILE
@@ -453,6 +454,7 @@ MODE=run; ARG=""; PARAM_SHA=""
 case "${1:-}" in
   "") ;;
   --parametri-sha256) PARAM_SHA=${2:-}; [[ "$PARAM_SHA" =~ ^[0-9a-f]{64}$ ]] && [ "$#" = 2 ] || { say "impronta parametri non valida" >&2; exit 2; } ;;
+  --collaudo-backup-vm) [ "$#" = 1 ] || exit 2; MODE=collaudo-backup ;;
   --piano|--stato) MODE=piano ;;
   --rollback) MODE=rollback; ARG=${2:-} ;;
   --dichiara-correzione) MODE=correzione; ARG=${2:-} ;;
@@ -520,6 +522,19 @@ STATE_VIEW=$LOGROOT/stato
 st_publish
 say "ops-installa: esecuzione $RUNID ($(date -u '+%F %T UTC'))"
 say "$(date -u '+%F %T')  inizio esecuzione ($MODE${ARG:+ $ARG})" >> "$RUNDIR/riepilogo.log"
+
+if [ "$MODE" = collaudo-backup ]; then
+  [ "$FOUNDATION_ONLY" = yes ] || stop "collaudo riservato a una foundation VM"
+  [ -n "$(st_meta completato)" ] || stop "completare prima la foundation"
+  if [ -z "$T" ]; then systemd-detect-virt --vm --quiet || stop "collaudo riservato a VM riconosciuta"; fi
+  rc=0
+  run_logged collaudo-backup-vm bash "$P/passo10-collaudo-vm.sh" || rc=$?
+  if [ "$rc" = 0 ]; then st_set test-backup-vm fatto "dati sintetici; nessuna copertura reale; ${LAST_LOG##*/}"
+  else st_set test-backup-vm errore "codice $rc; ripetere lo stesso comando; ${LAST_LOG##*/}"; fi
+  finish_summary
+  say 'Backup reale, BORG_REPO, esclusioni e approvazioni non modificati. Decisioni 10/10.3 ancora aperte.'
+  exit "$rc"
+fi
 
 if [ "$MODE" = rollback ]; then
   scr=""; for kv in $ROLLBACK_SCRIPTS; do [ "${kv%%=*}" = "$ARG" ] && scr=${kv#*=}; done

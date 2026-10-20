@@ -45,18 +45,23 @@ non autorizza da solo backup permanenti, offsite, spese o riavvii successivi.
 Con mandato di collaudo, registrare difetti del pacchetto, comportamento atteso,
 file coinvolti, modifica minima e prove; non trasformarli in decisioni di produzione.
 
-Nella RC3 non esiste un comando supportato per riaprire solo 10/10b dopo la foundation
-aggiornando automaticamente tutti gli stati. Non presentare la concatenazione manuale
-degli script come quel comando e non riavviare la modalita completa per aggirarlo.
-Il percorso deterministico completo gestisce BORG_REPO tramite act_backup tra 10 e 10b.
-Gli script diretti sono operazioni permanenti: il passo 10 attiva anche il cron notturno,
-non e una prova temporanea. Il loro uso richiede un mandato specifico e riconciliazione
-esplicita di configurazione, stato installer, registro e documenti.
+Per il collaudo dopo foundation usare unicamente:
+`sudo ops-installa --collaudo-backup-vm` (RC4 o successiva, VM riconosciuta e base completata).
+Il comando usa integrita e snapshot del pacchetto, lock e log standard. Esegue due backup
+Borg/borgmatic con dati sintetici, due ripristini con confronto di contenuti e metadati,
+rotazione log e controllo repository. Workspace temporaneo root 0700, rimosso anche in errore;
+nessun dato reale o segreto viene incluso, nessun cron o configurazione permanente installati.
+Lo stato `test-backup-vm` separato riporta fatto/errore e il codice reale. In errore leggere
+il log e ripetere lo stesso comando: nuova prova isolata, nessun passo manuale intermedio.
+Non cancella altri repository. La prova non e una modalita di attivazione del backup reale.
 
-Per un collaudo da zero del percorso completo usare una VM dedicata e la procedura
-completa applicabile con parametri approvati; non riutilizzare la VM foundation per
-simulare implicitamente un'installazione completa. L'offsite mancante resta bloccante
-per la manutenzione di sistema, anche se il backup locale e stato provato.
+Non impostare BORG_REPO e non rimuovere 10/10b dalle esclusioni dopo questa prova.
+Le questioni 10 e 10.3 restano aperte: il risultato non prova copertura dei dati reali,
+offsite o cron notturno e non approva la manutenzione di produzione.
+Il passo 10 reale installa anche il cron; non usarlo per una prova temporanea.
+L'attivazione permanente dopo foundation resta un mandato distinto, da definire con
+policy reali; non esiste ancora un comando che completi solo 10/10b riconciliando tutti
+quegli stati. Non presentare gli script manuali come quel comando.
 
 Log di esecuzione: usare il percorso gestito /var/log/ops-installa e run_logged del
 flusso deterministico, con permessi leggibili dall'amministratore e codice reale.

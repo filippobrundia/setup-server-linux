@@ -392,4 +392,26 @@ rc=$(oi '\n' --parametri-sha256 "$paramsha")
 cp -p /tmp/hc-sha.salvato "$HC"; rm -f /tmp/hc-sha.salvato
 rc=$(oi '\n' --parametri-sha256 nonvalida)
 [ "$rc" = 2 ] && pass "impronta parametri non valida rifiutata" || bad "impronta non valida (rc=$rc)"
+# Percorso dopo foundation: usa snapshot, lock e log senza attivare passi reali.
+state0
+printf '\nFOUNDATION_ONLY="yes"\n' >> "$HC"
+sed -i 's/^ESCLUSIONI=.*/ESCLUSIONI="2 7.1 10 10b 10.3 11.2 12.8"/' "$HC"
+printf '@completato 2026-10-20T00:00:00Z prova\n10 escluso data foundation\n10b escluso data foundation\n' >> "$IT/var/lib/ops-bootstrap/installa.state"
+printf '#!/bin/bash\nexit "$(cat "$OPS_INSTALLA_TEST_ROOT/vm-code")"\n' > "$IT/srv/ops/docs/bootstrap/passo10-collaudo-vm.sh"
+reref
+hc_before=$(sha256sum "$HC")
+echo 37 > "$IT/vm-code"
+rc=$(oi '' --collaudo-backup-vm)
+f=$(ls "$IT"/var/log/ops-installa/ultimo/*-collaudo-backup-vm.log | tail -1)
+[ "$rc" = 37 ] && grep -q 'codice di uscita: 37' "$f" && grep -q '^test-backup-vm errore ' "$IT/var/lib/ops-bootstrap/installa.state" \
+ && pass "backup VM: codice reale 37 e stato errore, senza pipeline che lo mascheri" || { bad "backup VM errore (rc=$rc)"; tail -10 "$IT/out.txt"; }
+echo 0 > "$IT/vm-code"
+rc=$(oi '' --collaudo-backup-vm)
+[ "$rc" = 0 ] && [ "$hc_before" = "$(sha256sum "$HC")" ] && grep -q '^test-backup-vm fatto ' "$IT/var/lib/ops-bootstrap/installa.state" \
+ && ! grep -q '^10 fatto ' "$IT/var/lib/ops-bootstrap/installa.state" && ! grep -q '^10b fatto ' "$IT/var/lib/ops-bootstrap/installa.state" \
+ && pass "backup VM: ripresa riuscita, host.conf e passi reali esclusi invariati" || { bad "backup VM ripresa (rc=$rc)"; tail -10 "$IT/out.txt"; }
+sed -i '/^@completato /d' "$IT/var/lib/ops-bootstrap/installa.state"
+rc=$(oi '' --collaudo-backup-vm)
+[ "$rc" = 3 ] && grep -q 'completare prima la foundation' "$IT/out.txt" && pass "backup VM rifiutato prima del completamento foundation" || bad "backup VM prerequisito (rc=$rc)"
+
 cp -p /tmp/ops-maint.conf.d1 /etc/ops-maint.conf; rm -f /etc/ops-maint.conf.bak-* /tmp/passo9-050.sh; rm -rf $IT /tmp/it-dati
