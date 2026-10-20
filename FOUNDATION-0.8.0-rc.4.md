@@ -1,4 +1,4 @@
-# Foundation 0.8.0-rc.4 — collaudo dopo la base
+# Foundation 0.8.0-rc.4 â€” collaudo dopo la base
 
 Revisione incrementale, stabile 0.7.0 e RC3 immutate. Nessuna modifica a N100.
 
@@ -6,19 +6,23 @@ Revisione incrementale, stabile 0.7.0 e RC3 immutate. Nessuna modifica a N100.
 
 Conservare snapshot della VM e i log. Chiudere Claude durante l'aggiornamento del pacchetto.
 I comandi vanno nel terminale SSH come amministratore normale.
-Prima scaricare/verificare il pacchetto ed eseguire il controllo di compatibilita:
+Il blocco controlla la compatibilita, aggiorna gli strumenti e lancia la prova.
+Un errore arresta la sequenza prima del passaggio successivo; pipefail conserva anche
+un errore del download. Le impostazioni della shell restano nel sottoprocesso.
+Per fissare anche il digest indipendente usare il blocco con --sha256 pubblicato nella release.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.8.0-rc.4/install.sh | bash -s -- --check --no-kb --agente claude
+(
+  set -euo pipefail
+  url=https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.8.0-rc.4/install.sh
+  curl -fsSL "$url" | bash -s -- --check --no-kb --agente claude
+  curl -fsSL "$url" | bash -s -- --no-kb --agente claude
+  sudo ops-installa --collaudo-backup-vm
+)
 ```
 
-Aggiungere `--sha256` con l'impronta della release per fissare anche il digest indipendente.
-Se il controllo segnala conflitti, fermarsi e conservare l'output: non sovrascrivere file a mano.
-Se termina con codice 0, applicare il pacchetto (senza --configura, senza rifare i passi foundation):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.8.0-rc.4/install.sh | bash -s -- --no-kb --agente claude
-```
+Se il controllo segnala conflitti, conservare l'output: la sequenza si ferma.
+Non sovrascrivere file a mano e non usare --configura per applicare questo aggiornamento.
 
 Questa procedura e per la VM di prova con KB gia scollegata; non copiarla su altre macchine.
 Il bootstrap aggiorna gli strumenti del pacchetto; conserva host.conf, documenti modificati,
