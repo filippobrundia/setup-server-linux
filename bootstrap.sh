@@ -655,7 +655,7 @@ fi
 prossimo() {
   if grep -q '^STATO: COMPLETATO' "$OPS/docs/bootstrap/avanzamento.md"; then
     log "$1 Base aggiornata. La configurazione del server resta completata."
-    log "  configura-server mostra il rapporto e la scelta finale; agente apre una sessione amministrativa."
+    log "  configura-server mostra il rapporto; agente apre una sessione amministrativa."
   else
     log "$1 Base pronta. Se hai avviato installa-server.sh, il setup continua automaticamente nello stesso terminale."
     log "  Non aprire una chat AI e non lanciare altri comandi durante il setup."
