@@ -38,6 +38,8 @@ fi
 
 echo "== PRECHECK"
 bad=0
+[ -n "$BORG_REPO" ] || die "BORG_REPO vuoto: completare il passo 10 e registrare il repository prima del 10b; nessuna modifica"
+[ -d "$BORG_REPO" ] || die "BORG_REPO non e una directory esistente: nessuna modifica"
 h=$(date -u +%H%M); [ "$h" -lt 0300 ] || [ "$h" -ge 0410 ] || die "03:00–04:10 UTC: finestra del backup notturno"
 [ -f "$MANIFEST" ] && [ "$(attrs "$MANIFEST")" = "root:root 600" ] || die "manca il manifest del passo 10"
 for f in /etc/borgmatic/config.yaml /usr/local/bin/run-borgmatic.sh /etc/cron.d/borgmatic "$LOG"; do [ -f "$f" ] || ko "manca $f"; done

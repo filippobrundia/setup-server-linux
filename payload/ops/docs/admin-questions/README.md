@@ -36,3 +36,40 @@ Non modificare link o disabilitare servizi per nascondere errori di spegnimento.
 
 Nessun segreto nel registro, nei log condivisi o in Git. Conservare storia, prove, approvazioni e fallimenti.
 Il registro non esegue comandi. Non confonderlo con KB tecnica o memorie di aziende/progetti.
+
+## Mandato di collaudo VM
+
+Prima di proporre attivazioni, distinguere il mandato corrente del proprietario:
+collaudo del pacchetto su VM oppure amministrazione verso la produzione. `--vm`
+non autorizza da solo backup permanenti, offsite, spese o riavvii successivi.
+Con mandato di collaudo, registrare difetti del pacchetto, comportamento atteso,
+file coinvolti, modifica minima e prove; non trasformarli in decisioni di produzione.
+
+Nella RC3 non esiste un comando supportato per riaprire solo 10/10b dopo la foundation
+aggiornando automaticamente tutti gli stati. Non presentare la concatenazione manuale
+degli script come quel comando e non riavviare la modalita completa per aggirarlo.
+Il percorso deterministico completo gestisce BORG_REPO tramite act_backup tra 10 e 10b.
+Gli script diretti sono operazioni permanenti: il passo 10 attiva anche il cron notturno,
+non e una prova temporanea. Il loro uso richiede un mandato specifico e riconciliazione
+esplicita di configurazione, stato installer, registro e documenti.
+
+Per un collaudo da zero del percorso completo usare una VM dedicata e la procedura
+completa applicabile con parametri approvati; non riutilizzare la VM foundation per
+simulare implicitamente un'installazione completa. L'offsite mancante resta bloccante
+per la manutenzione di sistema, anche se il backup locale e stato provato.
+
+Log di esecuzione: usare il percorso gestito /var/log/ops-installa e run_logged del
+flusso deterministico, con permessi leggibili dall'amministratore e codice reale.
+Non dare per leggibile la home dagli agenti. Non usare pipe con tee come prova di
+successo: senza gestione esplicita del codice dello script mascherano i fallimenti.
+Un dry-run puo creare file temporanei: non promettere assenza assoluta di scritture.
+
+## Sospensione e ripresa
+
+`advance ID sospesa --evidence RIF_MOTIVO` conserva storia e approvazione precedente,
+ma esclude la questione dalla selezione next e dal vincolo della questione attiva.
+Non annulla modifiche gia eseguite: documentare stato reale e recupero ancora necessario.
+`report` continua a mostrarla. Per riprenderla usare
+`advance ID analisi --evidence RIF_NUOVO_MANDATO`: l'approvazione corrente viene svuotata,
+la storia resta e una decisione richiede una nuova approvazione prima dell'esecuzione.
+Non chiudere una questione per sbloccare le altre e non riscrivere la storia.

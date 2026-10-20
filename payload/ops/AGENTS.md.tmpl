@@ -258,3 +258,10 @@ Esegui i controlli autorizzati dell'host in chiamate Bash separate, ciascuna con
 - `/srv/ops/bin/kb status`
 Non unirli a `cat`, `cd`, `echo`, pipe, `;`, `&&`, assegnazioni o altri comandi. Le autorizzazioni dei singoli controlli non si estendono a un comando composto: questo puo restare nella sandbox e non raggiungere systemd. Leggi i documenti con il tool di lettura separato.
 Se systemctl segnala impossibilita di connettersi al bus nella sandbox, il servizio e NON VERIFICATO, non dimostrato inattivo. Ripeti con la singola chiamata autorizzata. Se anche questa e bloccata, riporta il limite senza aggirare la sandbox o chiedere sudo.
+
+## Mandato dopo una foundation su VM
+Prima di avanzare il registro distinguere collaudo del pacchetto e amministrazione di
+produzione dal mandato corrente del proprietario. In collaudo analizzare difetti e
+prove riproducibili; non chiedere automaticamente scelte di produzione o attivare
+backup permanenti. Leggere docs/admin-questions/README.md, inclusi limiti del percorso
+10/10b, log e sospensione. Una sospensione non cancella la storia o annulla operazioni.

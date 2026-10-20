@@ -13,6 +13,24 @@ import importlib.util
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / 'payload/ops/bin/ops-questions.py'
 
+class BackupPreflight(unittest.TestCase):
+    def test_missing_repository_stops_before_mutations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = ROOT / 'payload/ops/docs/bootstrap/passo10b-rotazione-verifica.sh'
+            script = base / source.name
+            script.write_bytes(source.read_bytes())
+            # Solo identita e configurazione simulate; il controllo e lo script sono reali.
+            common = base / 'passi-comune.sh'
+            for value in ('', str(base / 'nonexistent')):
+                common.write_text('TEMPLATES=/unused\nid() { echo 0; }\n'
+                                  + 'load_host_conf() { BORG_REPO="' + value + '"; }\n')
+                result = subprocess.run(['bash', str(script)], capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('BORG_REPO', result.stderr)
+                self.assertIn('nessuna modifica', result.stderr)
+                self.assertNotIn('== 1. ROTAZIONE', result.stdout)
+
 class Questions(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -58,6 +76,32 @@ class Questions(unittest.TestCase):
             self.runq('advance', '10.3', state, '--evidence', 'riferimento prova')
         self.assertNotIn('10.3:', self.runq('report').stdout)
         self.assertEqual(len(json.loads(self.path().read_text())['10.3']['history']), 5)
+
+    def test_suspend_unblocks_next_and_resume_requires_new_approval(self):
+        self.prepared()
+        self.runq('advance', '10.3', 'approvazione', '--evidence', 'proposta')
+        self.runq('advance', '10.3', 'approvata', '--evidence', 'approvazione originale')
+        self.runq('advance', '10.3', 'sospesa', '--evidence', 'mandato cambiato')
+        self.assertIn('10.3: sospesa', self.runq('report').stdout)
+        self.assertIn('12.8:', self.runq('next').stdout)
+        self.runq('advance', '12.8', 'approvazione', '--evidence', 'altra proposta')
+        self.runq('advance', '10.3', 'esecuzione', '--evidence', 'riuso vietato', ok=False)
+        self.runq('advance', '12.8', 'sospesa', '--evidence', 'rinvio')
+        self.assertIn('Nessuna questione selezionabile', self.runq('next').stdout)
+        self.runq('advance', '10.3', 'analisi', '--evidence', 'nuovo mandato')
+        data = json.loads(self.path().read_text(encoding='utf-8'))['10.3']
+        self.assertEqual(data['approval'], '')
+        self.assertTrue(any(h['evidence'] == 'approvazione originale' for h in data['history']))
+        self.runq('advance', '10.3', 'esecuzione', '--evidence', 'salto vietato', ok=False)
+        self.runq('advance', '10.3', 'approvazione', '--evidence', 'nuova proposta')
+        self.runq('advance', '10.3', 'approvata', '--evidence', 'nuova approvazione')
+
+    def test_suspension_requires_evidence_and_cannot_reopen_closed(self):
+        self.prepared()
+        self.runq('advance', '10.3', 'sospesa', '--evidence', ' ', ok=False)
+        for state in ('approvazione', 'approvata', 'esecuzione', 'verifica', 'chiusa'):
+            self.runq('advance', '10.3', state, '--evidence', 'prova')
+        self.runq('advance', '10.3', 'sospesa', '--evidence', 'vietato', ok=False)
 
     def test_lock_and_duplicate_configuration(self):
         self.runq('sync')

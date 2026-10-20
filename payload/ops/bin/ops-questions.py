@@ -58,7 +58,7 @@ def main():
     collect.add_argument('--kb-failed', action='store_true')
     advance = sub.add_parser('advance')
     advance.add_argument('id', choices=TOPICS)
-    advance.add_argument('state', choices=STATES)
+    advance.add_argument('state', choices=STATES + ['sospesa'])
     advance.add_argument('--evidence', required=True, help='Motivo o riferimento non segreto a prova/approvazione')
     args = p.parse_args()
     if args.command == 'advance' and not args.evidence.strip():
@@ -103,18 +103,27 @@ def main():
                     dirty = True
         elif args.command == 'advance':
             record = records[args.id]
-            current, target = STATES.index(record['state']), STATES.index(args.state)
+            previous = record['state']
+            suspending = args.state == 'sospesa' and previous not in ('chiusa', 'sospesa')
+            resuming = previous == 'sospesa' and args.state == 'analisi'
+            if (previous == 'sospesa' or args.state == 'sospesa') and not (suspending or resuming):
+                raise ValueError('una questione sospesa riparte solo da analisi con nuove evidenze')
+            current = STATES.index(previous) if previous in STATES else -1
+            target = STATES.index(args.state) if args.state in STATES else -1
             routine_start = (not record.get('requires_approval', True) and current == 0 and args.state == 'esecuzione')
-            if target != current + 1 and not routine_start:
+            if target != current + 1 and not (routine_start or suspending or resuming):
                 raise ValueError('transizione non consecutiva')
             if routine_start and not all(record[k].strip() for k in ('analysis', 'recommendation')):
                 raise ValueError('analisi e raccomandazione necessarie prima del lavoro ordinario')
-            active = [k for k, r in records.items() if r['state'] not in ('analisi', 'chiusa')]
-            if active and active != [args.id]:
+            active = [k for k, r in records.items() if r['state'] not in ('analisi', 'chiusa', 'sospesa')]
+            if active and active != [args.id] and not suspending:
                 raise ValueError('concludere prima la questione attiva: ' + active[0])
             if args.state == 'approvazione' and not all(record[k].strip() for k in ('analysis', 'alternatives', 'recommendation')):
                 raise ValueError('compilare analisi, alternative e raccomandazione nel registro prima della proposta')
             record['state'] = args.state
+            if resuming:
+                # La vecchia approvazione resta nella storia, ma non e riutilizzabile.
+                record['approval'] = ''
             field = {'approvata': 'approval', 'esecuzione': 'execution', 'verifica': 'execution', 'chiusa': 'verification'}.get(args.state)
             if field:
                 record[field] = args.evidence
@@ -131,12 +140,13 @@ def main():
             os.replace(tmp, path)
         pending = [(k, r) for k, r in records.items() if r['state'] != 'chiusa']
         if args.command == 'next':
+            pending = [(k, r) for k, r in pending if r['state'] != 'sospesa']
             priority = {'10': 0, 'finalrd': 1, 'kb-sync': 2}
             pending = sorted(pending, key=lambda pair: (pair[1]['state'] == 'analisi', priority.get(pair[0], 10)))[:1]
         for key, record in pending:
             print(f"{key}: {record['state']} — {record['title']}")
         if not pending:
-            print('Nessuna questione registrata aperta; non costituisce verifica del server.')
+            print('Nessuna questione selezionabile (verificare anche le sospese con report); non costituisce verifica del server.')
     finally:
         os.close(fd)
         lock.unlink()
