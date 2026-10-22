@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh — punto di ingresso pubblico di setup-server-linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.8.0-rc.4/install.sh \
+#   curl -fsSL https://raw.githubusercontent.com/filippobrundia/setup-server-linux/v0.8.0-rc.5/install.sh \
 #     | bash -s -- --sha256 <IMPRONTA DALLA PAGINA DELLA RELEASE> [--check] [--owner "Nome"] [--knowledge-base-only]
 #                  [--no-kb | --kb-url https://host/percorso]   (Knowledge Base facoltativa: senza opzioni la domanda arriva durante l'avvio)
 #                  [--agente claude|codex|agy|gemini]          (agente della sessione: senza opzione la domanda arriva alla fine)
@@ -12,7 +12,7 @@
 # "sudo bootstrap.sh --admin <questo utente>" (sudo chiede la password). --check: solo controllo, nessuna modifica.
 set -euo pipefail
 REPO=filippobrundia/setup-server-linux
-VERSION=0.8.0-rc.4
+VERSION=0.8.0-rc.5
 NAME=setup-server-linux-$VERSION
 BASE=https://github.com/$REPO/releases/download/v$VERSION
 

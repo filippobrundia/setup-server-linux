@@ -1,5 +1,5 @@
-> Candidato **0.8.0-rc.4**, base v0.7.0 congelata. Pre-release sperimentale: collaudo VM ancora da eseguire.
-> Per questa revisione seguire [FOUNDATION-0.8.0-rc.4.md](FOUNDATION-0.8.0-rc.4.md).
+> Candidato **0.8.0-rc.5**, base v0.7.0 congelata. Correzioni mirate di diagnostica e messaggi firewall; produzione non validata.
+> Percorso corrente: prima VM Hyper-V con foundation RC4 gia completata. Seguire [FOUNDATION-0.8.0-rc.5.md](FOUNDATION-0.8.0-rc.5.md).
 > I comandi pubblici 0.7.0 sotto restano riferiti alla release stabile precedente.
 
 # setup-server-linux

@@ -203,10 +203,12 @@ echo "  stato: $STATE"
 echo "== MODIFICA"
 for r in "${RANGES[@]}"; do ufw limit from "$r" to any port 22 proto tcp comment 'SSH dalla LAN'; done
 # ripristino automatico armato PRIMA dell'attivazione: se l'accesso si perde, UFW si disattiva da solo
-RB_AT=$(date -d "+${ROLLBACK_MIN} min" '+%F %T %Z')   # timer monotono: l'ora reale di systemctl show resta vuota
+RB_EPOCH=$(( $(date +%s) + ROLLBACK_MIN * 60 ))
+RB_AT=$(date -u -d "@$RB_EPOCH" '+%F %T UTC')   # stima condivisa, calcolata all'armamento del timer monotono
 systemd-run --quiet --unit="$RB_UNIT" --on-active="${ROLLBACK_MIN}min" --timer-property=AccuracySec=1s \
   /usr/sbin/ufw disable
 systemctl is-active --quiet "$RB_UNIT.timer" || die "timer di ripristino non armato: UFW NON attivato (regole aggiunte, inattive)"
+printf 'rollback_epoch=%s\n' "$RB_EPOCH" >> "$STATE"
 ufw --force enable
 
 echo "== VERIFY"

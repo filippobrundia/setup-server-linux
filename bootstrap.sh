@@ -469,7 +469,12 @@ npm_agent codex @openai/codex latest
 npm_agent gemini @google/gemini-cli latest
 node --check "$OPS/bin/gemini-sandbox-check.mjs" || die "controllo sandbox Gemini non valido"
 # Antigravity: binario di root in /opt/ops-agenti, profilo AppArmor mirato se la restrizione dei namespace è attiva
-bash "$STAGE/ops/maint/ops-agy" install 2>&1 | sed 's/^/  /' | tee -a "$LOG"; [ "${PIPESTATUS[0]}" = 0 ] || die "Antigravity CLI: installazione non riuscita (ops-agy)"
+AGY_RC=0
+bash "$STAGE/ops/maint/ops-agy" install 2>&1 | sed 's/^/  /' | tee -a "$LOG" || AGY_RC=$?
+if [ "$AGY_RC" != 0 ]; then
+  log "ERRORE: Antigravity CLI non verificato (codice $AGY_RC). Bootstrap interrotto prima della configurazione server. Log: $LOG"
+  exit "$AGY_RC"
+fi
 # bubblewrap (Claude Code, Codex): Ubuntu 25.04+ ha già un profilo per /usr/bin/bwrap; dove manca e la restrizione dei
 # namespace è attiva (24.04) si installa il profilo mirato indicato dalla documentazione di Claude Code, solo per bwrap
 if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = 1 ] && [ -d /sys/kernel/security/apparmor ] \

@@ -60,7 +60,7 @@ grep -qE "$re" <<<'Default: deny (incoming), allow (outgoing), disabled (routed)
 tn "difetto 4: nessun 'who' nel passo 6" grep -qE '^\s*who\b' $D/passo6-pacchetti.sh
 t "difetto 4: sessioni SSH lette con ss" grep -q "ss -tnH state established '( sport = :22 )'" $D/passo6-pacchetti.sh
 tn "difetto 8: niente NextElapseUSecRealtime" grep -q NextElapseUSecRealtime $D/passo7-impostazioni.sh
-t "difetto 8: ora limite calcolata all'armamento" grep -q 'RB_AT=$(date -d' $D/passo7-impostazioni.sh
+t "difetto 8: ora limite condivisa calcolata all'armamento" grep -q '^RB_EPOCH=' $D/passo7-impostazioni.sh
 tn "difetto 6: nessun '| head' nel passo 7" grep -qE '\| *head' $D/passo7-impostazioni.sh
 
 echo "== T19 passo 5 su gruppi reali (lxd, docker, adm)"

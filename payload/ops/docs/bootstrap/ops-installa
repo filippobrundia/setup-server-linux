@@ -297,6 +297,16 @@ for l in sys.stdin:
     except ValueError: pass' "$LAN_CIDR"; }
 new_ssh() { comm -13 <(tr ',' '\n' <<<"$(st_meta ssh_prima)" | sed '/^$/d' | sort -u) <(ssh_tuples) | in_lan; }
 ufw_active() { ufw status 2>/dev/null | grep -qx 'Status: active'; }
+ufw_deadline() {
+  local epoch
+  # Solo informazione: la conferma continua a dipendere dal timer e dal nuovo SSH.
+  epoch=$(awk -F= '$1=="rollback_epoch" {print $2}' "$LIBDIR/passo7-ufw.state" 2>/dev/null || true)
+  if [[ "$epoch" =~ ^[0-9]+$ ]]; then
+    date -u -d "@$epoch" '+%F %T UTC' 2>/dev/null && return 0
+  fi
+  # Ripresa di un timer armato da una release precedente: non inventare una scadenza.
+  echo 'orario non disponibile; fa fede ops-ufw-rollback.timer'
+}
 
 act_ufw() {
   local s dl n
@@ -305,7 +315,6 @@ act_ufw() {
     [ -n "$(ssh_tuples | in_lan)" ] || stop "passo 7: eseguire ops-installa da una sessione SSH dalla rete $LAN_CIDR (serve per confermare il firewall)"
     run_logged 7-dry-run bash "$P/passo7-impostazioni.sh" --dry-run || return 1
     st_meta_set ssh_prima "$(ssh_tuples | paste -sd,)"
-    st_meta_set ssh_scadenza "$(( $(date +%s) + ROLLBACK_MIN * 60 ))"
     if ! run_logged 7 bash "$P/passo7-impostazioni.sh"; then
       systemctl is-active --quiet "$RB_UNIT" && say "Ripristino automatico armato: UFW si disattiverà da solo entro $ROLLBACK_MIN minuti."
       say "Dopo la diagnosi (log del passo 7): sudo ops-installa --rollback 7, poi sudo ops-installa."
@@ -324,14 +333,15 @@ act_ufw() {
     fi
     n=$(new_ssh)
     if [ -n "$n" ]; then say "nuovo login SSH dalla LAN rilevato: $(paste -sd' ' <<<"$n")"; break; fi
-    dl=$(date -d "@$(st_meta ssh_scadenza)" '+%H:%M:%S %Z')
+    dl=$(ufw_deadline)
     say ""
     say ">>> UFW è attivo. Apri ORA un NUOVO login SSH verso questa macchina, lasciando aperta questa sessione."
-    say ">>> Se il nuovo login riesce, torna qui e premi Invio. Se non riesce, non fare nulla: alle $dl UFW si disattiva da solo."
-    ask "    Invio = nuovo login riuscito; 'dopo' = esci e rilancia 'sudo ops-installa' DAL NUOVO login prima delle $dl: "
+    say ">>> Se il nuovo login riesce, torna qui e premi Invio. Altrimenti lascia intervenire il ripristino automatico."
+    say ">>> Ripristino automatico previsto verso: $dl."
+    ask "    Invio = nuovo login riuscito; 'dopo' = esci e rilancia 'sudo ops-installa' DAL NUOVO login prima che scada il timer: "
     case $REPLY_TXT in
       dopo|"") [ "$REPLY_TXT" = dopo ] || [ "$TTY_OK" = 0 ] || continue
-               say "In attesa della conferma: rilanciare 'sudo ops-installa' dal nuovo login SSH prima delle $dl."; return 5 ;;
+               say "In attesa della conferma: rilanciare 'sudo ops-installa' dal nuovo login SSH prima che scada il timer ($dl)."; return 5 ;;
     esac
   done
   run_logged 7-conferma bash "$P/passo7-impostazioni.sh" --confirm || return 1
