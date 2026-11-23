@@ -23,10 +23,21 @@ note() { printf '\n== %s ==\n' "$*"; }
 [[ ${ID:-} == ubuntu && ${VERSION:-} == *LTS* ]] || die 'questa procedura richiede Ubuntu.'
 id -nG | tr ' ' '\n' | grep -qx sudo || die "l'utente corrente deve appartenere al gruppo sudo."
 [[ ! -e /usr/local/sbin/servern100-maint ]] || die 'Questo launcher richiede il nuovo N150.'
-virt=$(systemd-detect-virt 2>/dev/null || true)
-[[ -z $virt || $virt == none ]] || die "rilevato ambiente virtuale/container ($virt); il launcher e per l'N150 fisico."
-cpu_model=$(awk -F: '/^model name[[:space:]]*:/ {sub(/^[[:space:]]+/, "", $2); print $2; exit}' /proc/cpuinfo 2>/dev/null || true)
-[[ $cpu_model == *N150* ]] || die "CPU rilevata: ${cpu_model:-sconosciuta}; atteso Intel N150. Non modifico questa macchina."
+setup_mode=--foundation
+case ${1:-} in
+  '') [[ $# == 0 ]] || die 'Uso: install-n150-pilota.sh [--vm]' ;;
+  --vm)
+    [[ $# == 1 ]] || die 'Uso: install-n150-pilota.sh [--vm]'
+    setup_mode=--vm ;;
+  *) die 'Uso: install-n150-pilota.sh [--vm]' ;;
+esac
+if [[ $setup_mode == --vm ]]; then
+  systemd-detect-virt --vm --quiet || die '--vm richiede una macchina virtuale.'
+else
+  [[ $(systemd-detect-virt || true) == none ]] || die 'Su una VM usa --vm.'
+  grep -Eq '^model name[[:space:]]*:.*\bN150\b' /proc/cpuinfo ||
+    die 'Serve un Intel N150 fisico.'
+fi
 command -v curl >/dev/null || die 'curl manca: installa curl e ca-certificates, poi rilancia questo stesso comando.'
 if ! command -v ssh-keygen >/dev/null || ! command -v git >/dev/null; then
   sudo apt-get update
@@ -52,7 +63,7 @@ chmod 0600 "$ADDON_KEY"
 
 # Pin and verify GitHub's SSH host key before using the private repository.
 known_hosts="$HOME/.ssh/known_hosts"
-if ! ssh-keygen -F github.com -f "$known_hosts" >/dev/null 2>&1; then
+if ! ssh-keygen -F github.com -f "$known_hosts" 2>/dev/null | grep -q " ssh-ed25519 "; then
   keyscan=$(ssh-keyscan -T 15 -t ed25519 github.com 2>/dev/null || true)
   fingerprint=$(printf '%s\n' "$keyscan" | ssh-keygen -lf - 2>/dev/null | awk 'NR == 1 {print $2}')
   [[ -n $keyscan && $fingerprint == "$GITHUB_ED25519_FPR" ]] \
@@ -60,9 +71,9 @@ if ! ssh-keygen -F github.com -f "$known_hosts" >/dev/null 2>&1; then
   printf '%s\n' "$keyscan" >> "$known_hosts"
   chmod 0600 "$known_hosts"
 fi
-stored_fingerprint=$(ssh-keygen -F github.com -f "$known_hosts" | ssh-keygen -lf - 2>/dev/null | awk 'NR == 1 {print $2}')
+stored_fingerprint=$(ssh-keygen -F github.com -f "$known_hosts" | awk '$2 == "ssh-ed25519"' | ssh-keygen -lf - 2>/dev/null | awk 'NR == 1 {print $2}')
 [[ $stored_fingerprint == "$GITHUB_ED25519_FPR" ]] || die "impronta GitHub in known_hosts non corrispondente ($stored_fingerprint)."
-GIT_SSH_COMMAND="ssh -i $ADDON_KEY -o IdentitiesOnly=yes -o BatchMode=yes" \
+GIT_SSH_COMMAND="ssh -i $ADDON_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519" \
   git ls-remote --exit-code "$ADDON_REPO" refs/heads/main >/dev/null \
   || { printf 'La chiave non legge il repository privato. Controlla che la chiave pubblica sia registrata come deploy key read-only:\n' >&2; cat "$ADDON_KEY.pub" >&2; printf 'Foundation non e stata avviata.\n' >&2; exit 21; }
 
@@ -85,12 +96,12 @@ elif [[ -x /usr/local/bin/configura-server && -r $ADVANCEMENT ]]; then
       || die "Foundation $installed_version gie presente ma incompleta; non la aggiorno automaticamente a $FOUNDATION_VERSION."
   fi
   note 'Riprendo la configurazione Foundation gie avviata'
-  /usr/local/bin/configura-server --profilo docker --foundation </dev/tty
+  /usr/local/bin/configura-server --profilo docker "$setup_mode" </dev/tty
   foundation_status_complete || die 'la Foundation resta incompleta. Risolvi il gate indicato e rilancia lo stesso comando.'
 else
   note "Avvio Foundation $FOUNDATION_VERSION: Docker, Codex e Knowledge Base"
   curl -fsSL "$FOUNDATION_INSTALLER" | bash -s -- \
-    --configura --profilo docker --foundation --agente codex --kb-url "$KB_URL"
+    --configura --profilo docker "$setup_mode" --agente codex --kb-url "$KB_URL"
   foundation_status_complete || die 'la Foundation non risulta completata. Dopo il riavvio o il gate richiesto, rilancia lo stesso comando.'
   installed_version=$(</srv/ops/.bootstrap/version)
   [[ $installed_version == "$FOUNDATION_VERSION" ]] \
@@ -109,7 +120,7 @@ if [[ -e $ADDON_DIR && ! -d $ADDON_DIR/.git ]]; then
 fi
 if [[ ! -d $ADDON_DIR/.git ]]; then
   note 'Scarico N150 Add-on al commit v0.1.2 collaudato'
-  GIT_SSH_COMMAND="ssh -i $ADDON_KEY -o IdentitiesOnly=yes -o BatchMode=yes" \
+  GIT_SSH_COMMAND="ssh -i $ADDON_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519" \
     git clone "$ADDON_REPO" "$ADDON_DIR"
 fi
 [[ $(git -C "$ADDON_DIR" remote get-url origin) == "$ADDON_REPO" ]] \
